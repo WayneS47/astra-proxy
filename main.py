@@ -7,7 +7,7 @@ app = FastAPI()
 async def get_weather_and_astronomy(lat: float, lon: float):
     async with httpx.AsyncClient(timeout=10.0) as client:
         weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
-        moon_url = f"https://api.ipgeolocation.io/astronomy?apiKey=demo&lat={lat}&long={lon}"
+        moon_url = f"https://api.ipgeolocation.io/astronomy?apiKey=8cba696ee6c045d49e8d3367fedea2aa&lat={lat}&long={lon}"
 
         weather = None
         moon = None
