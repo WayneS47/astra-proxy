@@ -1,4 +1,4 @@
-# main.py — Astra Proxy (APOD + Eclipses Only, 20+20 NASA GSFC)
+# main.py — Astra Proxy (APOD + Eclipses Only, 20+20 NASA GSFC + /eclipse-list)
 
 import os
 from datetime import date
@@ -52,102 +52,96 @@ async def fetch_json(client: httpx.AsyncClient, url: str, params: Dict[str, Any]
 
 
 # -----------------------------------------------------------
-# ECLIPSE DATA — 20 Solar + 20 Lunar (NASA GSFC)
+# ECLIPSE DATA — 20+20 NASA GSFC
 # -----------------------------------------------------------
 
 SOLAR_ECLIPSES: List[Dict[str, Any]] = [
-    {"date": "2025-09-21", "calendar_date": "2025 Sep 21", "type": "Partial",
-     "visibility_text": "s Pacific, N.Z., Antarctica", "source": "NASA GSFC"},
-    {"date": "2026-02-17", "calendar_date": "2026 Feb 17", "type": "Annular",
-     "visibility_text": "s Argentina & Chile, s Africa, Antarctica", "source": "NASA GSFC"},
-    {"date": "2026-08-12", "calendar_date": "2026 Aug 12", "type": "Total",
-     "visibility_text": "n N. America, w Africa, Europe", "source": "NASA GSFC"},
-    {"date": "2027-02-06", "calendar_date": "2027 Feb 06", "type": "Annular",
-     "visibility_text": "S. America, Antarctica, w & s Africa", "source": "NASA GSFC"},
-    {"date": "2027-08-02", "calendar_date": "2027 Aug 02", "type": "Total",
-     "visibility_text": "Africa, Europe, Mid East, w & s Asia", "source": "NASA GSFC"},
-    {"date": "2028-01-26", "calendar_date": "2028 Jan 26", "type": "Annular",
-     "visibility_text": "e N. America, C. & S. America, w Europe, nw Africa", "source": "NASA GSFC"},
-    {"date": "2028-07-22", "calendar_date": "2028 Jul 22", "type": "Total",
-     "visibility_text": "SE Asia, E. Indies, Australia, N.Z.", "source": "NASA GSFC"},
-    {"date": "2029-01-14", "calendar_date": "2029 Jan 14", "type": "Partial",
-     "visibility_text": "N. America, C. America", "source": "NASA GSFC"},
-    {"date": "2029-06-12", "calendar_date": "2029 Jun 12", "type": "Partial",
-     "visibility_text": "Arctic, Scandinavia, Alaska, n Asia, n Canada", "source": "NASA GSFC"},
-    {"date": "2029-07-11", "calendar_date": "2029 Jul 11", "type": "Partial",
-     "visibility_text": "s Chile, s Argentina", "source": "NASA GSFC"},
-    {"date": "2029-12-05", "calendar_date": "2029 Dec 05", "type": "Partial",
-     "visibility_text": "s Argentina, s Chile, Antarctica", "source": "NASA GSFC"},
-    {"date": "2030-06-01", "calendar_date": "2030 Jun 01", "type": "Annular",
-     "visibility_text": "Europe, n Africa, Mid East, Asia, Arctic, Alaska", "source": "NASA GSFC"},
-    {"date": "2030-11-25", "calendar_date": "2030 Nov 25", "type": "Total",
-     "visibility_text": "s Africa, s Indian Oc., E. Indies, Australia, Antarctica", "source": "NASA GSFC"},
-    {"date": "2031-05-21", "calendar_date": "2031 May 21", "type": "Annular",
-     "visibility_text": "Africa, s Asia, E. Indies, Australia", "source": "NASA GSFC"},
-    {"date": "2031-11-14", "calendar_date": "2031 Nov 14", "type": "Hybrid",
-     "visibility_text": "Pacific, s US, C. America, nw S. America", "source": "NASA GSFC"},
-    {"date": "2032-05-09", "calendar_date": "2032 May 09", "type": "Annular",
-     "visibility_text": "s S. America, s Africa", "source": "NASA GSFC"},
-    {"date": "2032-11-03", "calendar_date": "2032 Nov 03", "type": "Partial",
-     "visibility_text": "Asia", "source": "NASA GSFC"},
-    {"date": "2033-03-30", "calendar_date": "2033 Mar 30", "type": "Total",
-     "visibility_text": "N. America", "source": "NASA GSFC"},
-    {"date": "2033-09-23", "calendar_date": "2033 Sep 23", "type": "Partial",
-     "visibility_text": "s S. America, Antarctica", "source": "NASA GSFC"},
-    {"date": "2034-03-20", "calendar_date": "2034 Mar 20", "type": "Total",
-     "visibility_text": "Africa, Europe, w Asia", "source": "NASA GSFC"},
+    {"date": "2025-09-21", "type": "Partial", "visibility_text": "s Pacific, N.Z., Antarctica"},
+    {"date": "2026-02-17", "type": "Annular", "visibility_text": "s Argentina & Chile, s Africa, Antarctica"},
+    {"date": "2026-08-12", "type": "Total", "visibility_text": "n N. America, w Africa, Europe"},
+    {"date": "2027-02-06", "type": "Annular", "visibility_text": "S. America, Antarctica, w & s Africa"},
+    {"date": "2027-08-02", "type": "Total", "visibility_text": "Africa, Europe, Mid East, w & s Asia"},
+    {"date": "2028-01-26", "type": "Annular", "visibility_text": "e N. America, C. & S. America, w Europe, nw Africa"},
+    {"date": "2028-07-22", "type": "Total", "visibility_text": "SE Asia, E. Indies, Australia, N.Z."},
+    {"date": "2029-01-14", "type": "Partial", "visibility_text": "N. America, C. America"},
+    {"date": "2029-06-12", "type": "Partial", "visibility_text": "Arctic, Scandinavia, Alaska, n Asia, n Canada"},
+    {"date": "2029-07-11", "type": "Partial", "visibility_text": "s Chile, s Argentina"},
+    {"date": "2029-12-05", "type": "Partial", "visibility_text": "s Argentina, s Chile, Antarctica"},
+    {"date": "2030-06-01", "type": "Annular", "visibility_text": "Europe, n Africa, Mid East, Asia, Arctic, Alaska"},
+    {"date": "2030-11-25", "type": "Total", "visibility_text": "s Africa, s Indian Oc., E. Indies, Australia, Antarctica"},
+    {"date": "2031-05-21", "type": "Annular", "visibility_text": "Africa, s Asia, E. Indies, Australia"},
+    {"date": "2031-11-14", "type": "Hybrid", "visibility_text": "Pacific, s US, C. America, nw S. America"},
+    {"date": "2032-05-09", "type": "Annular", "visibility_text": "s S. America, s Africa"},
+    {"date": "2032-11-03", "type": "Partial", "visibility_text": "Asia"},
+    {"date": "2033-03-30", "type": "Total", "visibility_text": "N. America"},
+    {"date": "2033-09-23", "type": "Partial", "visibility_text": "s S. America, Antarctica"},
+    {"date": "2034-03-20", "type": "Total", "visibility_text": "Africa, Europe, w Asia"},
 ]
 
 LUNAR_ECLIPSES: List[Dict[str, Any]] = [
-    {"date": "2026-03-03", "calendar_date": "2026 Mar 03", "type": "Total",
-     "visibility_text": "e Asia, Australia, Pacific, Americas", "source": "NASA GSFC"},
-    {"date": "2026-08-28", "calendar_date": "2026 Aug 28", "type": "Partial",
-     "visibility_text": "e Pacific, Americas, Europe, Africa", "source": "NASA GSFC"},
-    {"date": "2027-02-20", "calendar_date": "2027 Feb 20", "type": "Penumbral",
-     "visibility_text": "Americas, Europe, Africa, Asia", "source": "NASA GSFC"},
-    {"date": "2027-07-18", "calendar_date": "2027 Jul 18", "type": "Penumbral",
-     "visibility_text": "e Africa, Asia, Australia, Pacific", "source": "NASA GSFC"},
-    {"date": "2027-08-17", "calendar_date": "2027 Aug 17", "type": "Penumbral",
-     "visibility_text": "Pacific, Americas", "source": "NASA GSFC"},
-    {"date": "2028-01-12", "calendar_date": "2028 Jan 12", "type": "Partial",
-     "visibility_text": "Americas, Europe, Africa", "source": "NASA GSFC"},
-    {"date": "2028-07-06", "calendar_date": "2028 Jul 06", "type": "Partial",
-     "visibility_text": "Europe, Africa, Asia, Australia", "source": "NASA GSFC"},
-    {"date": "2028-12-31", "calendar_date": "2028 Dec 31", "type": "Total",
-     "visibility_text": "Europe, Africa, Asia, Australia, Pacific", "source": "NASA GSFC"},
-    {"date": "2029-06-26", "calendar_date": "2029 Jun 26", "type": "Total",
-     "visibility_text": "Americas, Europe, Africa, Mid East", "source": "NASA GSFC"},
-    {"date": "2029-12-20", "calendar_date": "2029 Dec 20", "type": "Total",
-     "visibility_text": "Americas, Europe, Africa, Asia", "source": "NASA GSFC"},
-    {"date": "2030-06-15", "calendar_date": "2030 Jun 15", "type": "Partial",
-     "visibility_text": "Europe, Africa, Asia, Australia", "source": "NASA GSFC"},
-    {"date": "2030-12-09", "calendar_date": "2030 Dec 09", "type": "Penumbral",
-     "visibility_text": "Americas, Europe, Africa, Asia", "source": "NASA GSFC"},
-    {"date": "2031-05-07", "calendar_date": "2031 May 07", "type": "Penumbral",
-     "visibility_text": "Americas, Europe, Africa", "source": "NASA GSFC"},
-    {"date": "2031-06-05", "calendar_date": "2031 Jun 05", "type": "Penumbral",
-     "visibility_text": "E. Indies, Australia, Pacific", "source": "NASA GSFC"},
-    {"date": "2031-10-30", "calendar_date": "2031 Oct 30", "type": "Penumbral",
-     "visibility_text": "Americas", "source": "NASA GSFC"},
-    {"date": "2032-04-25", "calendar_date": "2032 Apr 25", "type": "Total",
-     "visibility_text": "e Africa, Asia, Australia, Pacific", "source": "NASA GSFC"},
-    {"date": "2032-10-18", "calendar_date": "2032 Oct 18", "type": "Total",
-     "visibility_text": "Africa, Europe, Asia, Australia", "source": "NASA GSFC"},
-    {"date": "2033-04-14", "calendar_date": "2033 Apr 14", "type": "Total",
-     "visibility_text": "Europe, Africa, Asia, Australia", "source": "NASA GSFC"},
-    {"date": "2033-10-08", "calendar_date": "2033 Oct 08", "type": "Total",
-     "visibility_text": "Asia, Australia, Pacific, Americas", "source": "NASA GSFC"},
-    {"date": "2034-04-03", "calendar_date": "2034 Apr 03", "type": "Penumbral",
-     "visibility_text": "Europe, Africa, Asia, Australia", "source": "NASA GSFC"},
+    {"date": "2026-03-03", "type": "Total", "visibility_text": "e Asia, Australia, Pacific, Americas"},
+    {"date": "2026-08-28", "type": "Partial", "visibility_text": "e Pacific, Americas, Europe, Africa"},
+    {"date": "2027-02-20", "type": "Penumbral", "visibility_text": "Americas, Europe, Africa, Asia"},
+    {"date": "2027-07-18", "type": "Penumbral", "visibility_text": "e Africa, Asia, Australia, Pacific"},
+    {"date": "2027-08-17", "type": "Penumbral", "visibility_text": "Pacific, Americas"},
+    {"date": "2028-01-12", "type": "Partial", "visibility_text": "Americas, Europe, Africa"},
+    {"date": "2028-07-06", "type": "Partial", "visibility_text": "Europe, Africa, Asia, Australia"},
+    {"date": "2028-12-31", "type": "Total", "visibility_text": "Europe, Africa, Asia, Australia, Pacific"},
+    {"date": "2029-06-26", "type": "Total", "visibility_text": "Americas, Europe, Africa, Mid East"},
+    {"date": "2029-12-20", "type": "Total", "visibility_text": "Americas, Europe, Africa, Asia"},
+    {"date": "2030-06-15", "type": "Partial", "visibility_text": "Europe, Africa, Asia, Australia"},
+    {"date": "2030-12-09", "type": "Penumbral", "visibility_text": "Americas, Europe, Africa, Asia"},
+    {"date": "2031-05-07", "type": "Penumbral", "visibility_text": "Americas, Europe, Africa"},
+    {"date": "2031-06-05", "type": "Penumbral", "visibility_text": "E. Indies, Australia, Pacific"},
+    {"date": "2031-10-30", "type": "Penumbral", "visibility_text": "Americas"},
+    {"date": "2032-04-25", "type": "Total", "visibility_text": "e Africa, Asia, Australia, Pacific"},
+    {"date": "2032-10-18", "type": "Total", "visibility_text": "Africa, Europe, Asia, Australia"},
+    {"date": "2033-04-14", "type": "Total", "visibility_text": "Europe, Africa, Asia, Australia"},
+    {"date": "2033-10-08", "type": "Total", "visibility_text": "Asia, Australia, Pacific, Americas"},
+    {"date": "2034-04-03", "type": "Penumbral", "visibility_text": "Europe, Africa, Asia, Australia"},
 ]
 
 
 # -----------------------------------------------------------
-# ECLIPSE VISIBILITY HELPERS
+# ECLIPSE VISIBILITY HELPERS (IMPROVED)
 # -----------------------------------------------------------
 
+def normalize_text(text: str) -> str:
+    """Normalize NASA visibility text for easier matching."""
+    t = text.lower()
+
+    replacements = {
+        "n. america": "north america",
+        "s. america": "south america",
+        "americas": "north america south america",
+        "n. amer": "north america",
+        "c. america": "central america",
+        "u.s.": "united states",
+        "u.s": "united states",
+        "us": "united states",
+        "usa": "united states",
+        "w.": "west",
+        "e.": "east",
+    }
+
+    for old, new in replacements.items():
+        t = t.replace(old, new)
+
+    return t
+
+
+def is_visible_in_tennessee(visibility_text: str) -> bool:
+    """Stronger Tennessee visibility detector."""
+    t = normalize_text(visibility_text)
+    return (
+        "north america" in t
+        or "united states" in t
+        or "usa" in t
+    )
+
+
 def classify_region(lat: float, lon: float) -> str:
-    """Map lat/lon to a simple region name."""
+    """Assign simple region names from lat/lon."""
     if 5 <= lat <= 75 and -170 <= lon <= -30:
         return "north america"
     if -60 <= lat <= 15 and -90 <= lon <= -30:
@@ -163,23 +157,21 @@ def classify_region(lat: float, lon: float) -> str:
     return "other"
 
 
-def is_visible_in_tennessee(visibility_text: str) -> bool:
-    """Simple check: Tennessee = North America (USA)."""
-    txt = visibility_text.lower()
-    return (
-        "north america" in txt
-        or "united states" in txt
-        or "usa" in txt
-    )
-
-
 def is_visible_in_region(visibility_text: str, region: str) -> bool:
-    """Simple region substring match."""
-    return region.lower() in visibility_text.lower()
+    """Region check using normalized text."""
+    t = normalize_text(visibility_text)
+    r = region.lower()
+
+    if r == "north america":
+        return ("north america" in t) or ("americas" in t)
+    if r == "south america":
+        return ("south america" in t) or ("americas" in t)
+
+    return r in t
 
 
 def _next_eclipse(today: date, eclipses: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Return the next eclipse after today."""
+    """Return next eclipse after today."""
     upcoming = []
     for e in eclipses:
         try:
@@ -199,7 +191,6 @@ def _next_eclipse(today: date, eclipses: List[Dict[str, Any]]) -> Optional[Dict[
 
 
 def build_eclipse_section(today: date, lat: float, lon: float) -> Dict[str, Any]:
-    """Build the eclipse portion of the /astro-events JSON output."""
     user_region = classify_region(lat, lon)
 
     next_solar = _next_eclipse(today, SOLAR_ECLIPSES)
@@ -225,7 +216,6 @@ def build_eclipse_section(today: date, lat: float, lon: float) -> Dict[str, Any]
 
 
 def build_event_summary(today: date, eclipse_info: Dict[str, Any]) -> str:
-    """Short human-readable summary."""
     parts = []
 
     s = eclipse_info.get("next_solar_eclipse")
@@ -242,8 +232,8 @@ def build_event_summary(today: date, eclipse_info: Dict[str, Any]) -> str:
     if l:
         tn = "will" if l.get("visible_from_tennessee") else "may not"
         parts.append(
-            f"**The next lunar eclipse is a {l.get('type','?')} eclipse on {l.get('date','?')}. "
-            f"It {tn} be visible from Tennessee.**"
+            f"The next lunar eclipse is a {l.get('type','?')} eclipse on {l.get('date','?')}. "
+            f"It {tn} be visible from Tennessee."
         )
     else:
         parts.append("There is no future lunar eclipse in the current list.")
@@ -257,47 +247,44 @@ def build_event_summary(today: date, eclipse_info: Dict[str, Any]) -> str:
 
 @app.get("/eclipse-list")
 async def eclipse_list(
-    lat: float = Query(..., description="Latitude of user (for regional classification)"),
-    lon: float = Query(..., description="Longitude of user"),
+    lat: float = Query(...),
+    lon: float = Query(...),
 ) -> Dict[str, Any]:
-    """Return complete lists of all solar and lunar eclipses."""
+    """Return full 20+20 eclipse tables with visibility fields applied."""
+    region = classify_region(lat, lon)
 
-    user_region = classify_region(lat, lon)
-
-    # Decorate each eclipse with visibility flags
-    def decorate(e: Dict[str, Any]) -> Dict[str, Any]:
-        vis = e.get("visibility_text", "")
-        return {
-            "date": e.get("date"),
-            "type": e.get("type"),
-            "visibility_text": vis,
-            "visible_from_tennessee": is_visible_in_tennessee(vis),
-            "visible_from_user_region": is_visible_in_region(vis, user_region),
-        }
-
-    solar_list = [decorate(e) for e in SOLAR_ECLIPSES]
-    lunar_list = [decorate(e) for e in LUNAR_ECLIPSES]
+    def decorate_all(eclipses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out = []
+        for e in eclipses:
+            vis = e.get("visibility_text", "")
+            out.append({
+                "date": e["date"],
+                "type": e["type"],
+                "visibility_text": vis,
+                "visible_from_tennessee": is_visible_in_tennessee(vis),
+                "visible_from_user_region": is_visible_in_region(vis, region),
+            })
+        return out
 
     return {
         "location": {"lat": lat, "lon": lon},
-        "user_region": user_region,
-        "total_solar_eclipses": len(solar_list),
-        "total_lunar_eclipses": len(lunar_list),
-        "solar_eclipses": solar_list,
-        "lunar_eclipses": lunar_list,
+        "user_region": region,
+        "total_solar_eclipses": len(SOLAR_ECLIPSES),
+        "total_lunar_eclipses": len(LUNAR_ECLIPSES),
+        "solar_eclipses": decorate_all(SOLAR_ECLIPSES),
+        "lunar_eclipses": decorate_all(LUNAR_ECLIPSES),
     }
 
 
 # -----------------------------------------------------------
-# /astro-events  (APOD + Eclipses Only)
+# /astro-events
 # -----------------------------------------------------------
 
 @app.get("/astro-events")
 async def astro_events(
-    lat: float = Query(..., description="Latitude of the observer"),
-    lon: float = Query(..., description="Longitude of the observer"),
+    lat: float = Query(...),
+    lon: float = Query(...),
 ) -> Dict[str, Any]:
-    """Return APOD + eclipse info."""
     if NASA_API_KEY is None:
         raise HTTPException(
             status_code=500,
@@ -306,7 +293,6 @@ async def astro_events(
 
     today = date.today()
 
-    # Fetch APOD
     async with httpx.AsyncClient() as client:
         apod_params = {
             "api_key": NASA_API_KEY,
@@ -315,23 +301,20 @@ async def astro_events(
         apod_url = f"{NASA_BASE_URL}/planetary/apod"
         apod = await fetch_json(client, apod_url, apod_params)
 
-    # Eclipse calculations
     eclipse_info = build_eclipse_section(today=today, lat=lat, lon=lon)
-
-    # Summary
-    event_summary = build_event_summary(today=today, eclipse_info=eclipse_info)
+    summary = build_event_summary(today=today, eclipse_info=eclipse_info)
 
     return {
         "location": {"lat": lat, "lon": lon},
         "date_generated": today.isoformat(),
         "apod": apod,
         "eclipses": eclipse_info,
-        "event_summary": event_summary,
+        "event_summary": summary,
     }
 
 
 # -----------------------------------------------------------
-# Existing /weather-astro Endpoint
+# Existing Weather + Astronomy Endpoint
 # -----------------------------------------------------------
 
 @app.get("/weather-astro")
@@ -339,7 +322,6 @@ async def weather_astro(
     lat: float = Query(...),
     lon: float = Query(...),
 ):
-    """Existing /weather-astro endpoint left intact."""
     open_meteo_url = (
         f"https://api.open-meteo.com/v1/forecast?"
         f"latitude={lat}&longitude={lon}&current_weather=true"
