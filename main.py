@@ -242,13 +242,50 @@ def build_event_summary(today: date, eclipse_info: Dict[str, Any]) -> str:
     if l:
         tn = "will" if l.get("visible_from_tennessee") else "may not"
         parts.append(
-            f"The next lunar eclipse is a {l.get('type','?')} eclipse on {l.get('date','?')}. "
-            f"It {tn} be visible from Tennessee."
+            f"**The next lunar eclipse is a {l.get('type','?')} eclipse on {l.get('date','?')}. "
+            f"It {tn} be visible from Tennessee.**"
         )
     else:
         parts.append("There is no future lunar eclipse in the current list.")
 
     return " ".join(parts)
+
+
+# -----------------------------------------------------------
+# NEW ENDPOINT: /eclipse-list
+# -----------------------------------------------------------
+
+@app.get("/eclipse-list")
+async def eclipse_list(
+    lat: float = Query(..., description="Latitude of user (for regional classification)"),
+    lon: float = Query(..., description="Longitude of user"),
+) -> Dict[str, Any]:
+    """Return complete lists of all solar and lunar eclipses."""
+
+    user_region = classify_region(lat, lon)
+
+    # Decorate each eclipse with visibility flags
+    def decorate(e: Dict[str, Any]) -> Dict[str, Any]:
+        vis = e.get("visibility_text", "")
+        return {
+            "date": e.get("date"),
+            "type": e.get("type"),
+            "visibility_text": vis,
+            "visible_from_tennessee": is_visible_in_tennessee(vis),
+            "visible_from_user_region": is_visible_in_region(vis, user_region),
+        }
+
+    solar_list = [decorate(e) for e in SOLAR_ECLIPSES]
+    lunar_list = [decorate(e) for e in LUNAR_ECLIPSES]
+
+    return {
+        "location": {"lat": lat, "lon": lon},
+        "user_region": user_region,
+        "total_solar_eclipses": len(solar_list),
+        "total_lunar_eclipses": len(lunar_list),
+        "solar_eclipses": solar_list,
+        "lunar_eclipses": lunar_list,
+    }
 
 
 # -----------------------------------------------------------
