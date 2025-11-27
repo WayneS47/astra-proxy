@@ -7,6 +7,7 @@ app = FastAPI()
 @app.get("/weather-astro")
 async def get_weather_and_astronomy(lat: float, lon: float):
     async with httpx.AsyncClient(timeout=10.0) as client:
+
         # Load API key from environment variable
         api_key = os.getenv("IPGEO_API_KEY")
 
@@ -61,7 +62,7 @@ async def get_weather_and_astronomy(lat: float, lon: float):
         try:
             if moon:
                 phase = moon.get("moon_phase")
-                illum = moon.get("moon_illumination")
+                illum = moon.get("moon_illumination_percentage")
                 moon_summary = (
                     f"The moon phase is {phase} with {illum}% illumination."
                 )
