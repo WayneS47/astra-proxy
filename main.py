@@ -54,7 +54,7 @@ async def fetch_json(client: httpx.AsyncClient, url: str, params: Dict[str, Any]
 
 
 # -----------------------------------------------------------
-# NASA GSFC Eclipse Tables (20 Solar + 20 Lunar)
+# ECLIPSE DATA — NASA GSFC 20+20
 # -----------------------------------------------------------
 
 SOLAR_ECLIPSES: List[Dict[str, Any]] = [
@@ -114,10 +114,8 @@ def normalize_text(text: str) -> str:
         "n. america": "north america",
         "s. america": "south america",
         "americas": "north america south america",
-        "n. amer": "north america",
         "c. america": "central america",
         "u.s.": "united states",
-        "u.s": "united states",
         "us": "united states",
         "usa": "united states",
     }
@@ -131,7 +129,6 @@ def is_visible_in_tennessee(visibility_text: str) -> bool:
     return (
         "north america" in t
         or "united states" in t
-        or "usa" in t
     )
 
 
@@ -166,35 +163,30 @@ def _next_eclipse(today: date, eclipses: List[Dict[str, Any]]) -> Optional[Dict[
             continue
         if d >= today:
             upcoming.append({**e, "date_obj": d})
-
     if not upcoming:
         return None
-
     nxt = min(upcoming, key=lambda e: e["date_obj"])
     nxt["date"] = nxt["date_obj"].isoformat()
     nxt.pop("date_obj", None)
     return nxt
 
 
-# -----------------------------------------------------------
-# Build Eclipse Section
-# -----------------------------------------------------------
-
-def build_eclipse_section(today: date, lat: float, lon: float) -> Dict[str, Any]]:
+def build_eclipse_section(today: date, lat: float, lon: float) -> Dict[str, Any]:
     region = classify_region(lat, lon)
+
     next_solar = _next_eclipse(today, SOLAR_ECLIPSES)
     next_lunar = _next_eclipse(today, LUNAR_ECLIPSES)
 
-    def decorate(e):
+    def decorate(e: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if e is None:
             return None
-        vis = e.get("visibility_text", "")
+        vis_text = e["visibility_text"]
         return {
             "date": e["date"],
             "type": e["type"],
-            "visibility_text": vis,
-            "visible_from_tennessee": is_visible_in_tennessee(vis),
-            "visible_from_user_region": is_visible_in_region(vis, region),
+            "visibility_text": vis_text,
+            "visible_from_tennessee": is_visible_in_tennessee(vis_text),
+            "visible_from_user_region": is_visible_in_region(vis_text, region),
         }
 
     return {
@@ -204,13 +196,8 @@ def build_eclipse_section(today: date, lat: float, lon: float) -> Dict[str, Any]
     }
 
 
-# -----------------------------------------------------------
-# Event Summary
-# -----------------------------------------------------------
-
 def build_event_summary(today: date, eclipse_info: Dict[str, Any]) -> str:
     parts = []
-
     s = eclipse_info.get("next_solar_eclipse")
     if s:
         tn = "will" if s["visible_from_tennessee"] else "will not"
@@ -218,9 +205,6 @@ def build_event_summary(today: date, eclipse_info: Dict[str, Any]) -> str:
             f"The next solar eclipse is a {s['type']} eclipse on {s['date']}. "
             f"It {tn} be visible from Tennessee."
         )
-    else:
-        parts.append("There is no future solar eclipse in the current list.")
-
     l = eclipse_info.get("next_lunar_eclipse")
     if l:
         tn = "will" if l["visible_from_tennessee"] else "may not"
@@ -228,21 +212,15 @@ def build_event_summary(today: date, eclipse_info: Dict[str, Any]) -> str:
             f"The next lunar eclipse is a {l['type']} eclipse on {l['date']}. "
             f"It {tn} be visible from Tennessee."
         )
-    else:
-        parts.append("There is no future lunar eclipse in the current list.")
-
     return " ".join(parts)
 
 
 # -----------------------------------------------------------
-# NEW: /eclipse-list
+# /eclipse-list — Full List
 # -----------------------------------------------------------
 
 @app.get("/eclipse-list")
-async def eclipse_list(
-    lat: float = Query(...),
-    lon: float = Query(...),
-):
+async def eclipse_list(lat: float = Query(...), lon: float = Query(...)):
     region = classify_region(lat, lon)
 
     def decorate_all(eclipses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -273,18 +251,22 @@ async def eclipse_list(
 # -----------------------------------------------------------
 
 @app.get("/astro-events")
-async def astro_events(
-    lat: float = Query(...),
-    lon: float = Query(...),
-):
+async def astro_events(lat: float = Query(...), lon: float = Query(...)):
+    if NASA_API_KEY is None:
+        raise HTTPException(
+            status_code=500,
+            detail="NASA_API_KEY is not configured."
+        )
+
     today = date.today()
 
     async with httpx.AsyncClient() as client:
+        apod_params = {"api_key": NASA_API_KEY, "date": today.isoformat()}
         apod_url = f"{NASA_BASE_URL}/planetary/apod"
-        apod = await fetch_json(client, apod_url, {"api_key": NASA_API_KEY, "date": today.isoformat()})
+        apod = await fetch_json(client, apod_url, apod_params)
 
-    eclipse_info = build_eclipse_section(today=today, lat=lat, lon=lon)
-    summary = build_event_summary(today=today, eclipse_info=eclipse_info)
+    eclipse_info = build_eclipse_section(today, lat, lon)
+    summary = build_event_summary(today, eclipse_info)
 
     return {
         "location": {"lat": lat, "lon": lon},
@@ -296,14 +278,11 @@ async def astro_events(
 
 
 # -----------------------------------------------------------
-# /weather-astro (Existing)
+# Weather + Astronomy
 # -----------------------------------------------------------
 
 @app.get("/weather-astro")
-async def weather_astro(
-    lat: float = Query(...),
-    lon: float = Query(...),
-):
+async def weather_astro(lat: float = Query(...), lon: float = Query(...)):
     open_meteo_url = (
         f"https://api.open-meteo.com/v1/forecast?"
         f"latitude={lat}&longitude={lon}&current_weather=true"
@@ -317,64 +296,59 @@ async def weather_astro(
         w = await client.get(open_meteo_url)
         m = await client.get(ipgeo_url)
 
-    return {
-        "weather": w.json(),
-        "moon": m.json(),
-    }
+    return {"weather": w.json(), "moon": m.json()}
 
 
 # -----------------------------------------------------------
-# NEW — /moon-phase (USNO Month Table, UT→CT Conversion)
+# Moon Phase — /moon-phase
 # -----------------------------------------------------------
 
-def convert_ut_to_ct(ut_string: str) -> str:
-    """Convert 'Jan 10 at 05:38 UT' → 'Jan 10 at 11:38 CT'."""
-    try:
-        parts = ut_string.replace("UT", "").strip()
-        dt = datetime.strptime(parts, "%b %d at %H:%M")
-        ut = pytz.timezone("UTC").localize(dt)
-        ct = ut.astimezone(pytz.timezone("America/Chicago"))
-        return ct.strftime("%b %d at %I:%M %p CT")
-    except Exception:
-        return ut_string
+def convert_ut_to_ct(ut_dt: datetime) -> str:
+    ct = pytz.timezone("America/Chicago")
+    ut = pytz.utc.localize(ut_dt)
+    return ut.astimezone(ct).strftime("%Y-%m-%d %I:%M %p CT")
 
 
 def parse_usno_month_table(html: str) -> List[Dict[str, str]]:
     soup = BeautifulSoup(html, "html.parser")
-    rows = soup.select("table tr")
-    out = []
+    table = soup.find("table")
+    if not table:
+        return []
 
+    rows = table.find_all("tr")[1:]
+
+    out = []
     for r in rows:
         cols = [c.get_text(strip=True) for c in r.find_all("td")]
         if len(cols) == 3:
             phase, day, ut_time = cols
-            ct_time = convert_ut_to_ct(f"{day} at {ut_time} UT")
+            try:
+                ut_dt = datetime.strptime(f"{day} {ut_time}", "%Y-%m-%d %H:%M")
+                ct_str = convert_ut_to_ct(ut_dt)
+            except:
+                ct_str = "?"
             out.append({
                 "phase": phase,
-                "ut_time": f"{day} at {ut_time} UT",
-                "ct_time": ct_time,
+                "date_ut": f"{day} {ut_time} UT",
+                "date_ct": ct_str
             })
     return out
 
 
 @app.get("/moon-phase")
 async def moon_phase():
-    """Return the current month's USNO moon phases with CT conversion."""
     today = date.today()
-    year = today.year
-    month = today.month
-
-    usno_url = f"https://aa.usno.navy.mil/calculated/moon/phases?month={month}&year={year}"
+    url = f"https://aa.usno.navy.mil/calculated/moon/phase?date={today.year}-{today.month:02d}"
 
     async with httpx.AsyncClient() as client:
-        resp = await client.get(usno_url)
-        if resp.status_code != 200:
-            raise HTTPException(502, "USNO moon-phase service unavailable.")
+        r = await client.get(url)
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail="USNO request failed")
 
-    phases = parse_usno_month_table(resp.text)
+    events = parse_usno_month_table(r.text)
 
     return {
-        "month": month,
-        "year": year,
-        "phases": phases,
+        "year": today.year,
+        "month": today.month,
+        "events": events,
     }
