@@ -304,3 +304,42 @@ async def weather_astro(lat: float = Query(...), lon: float = Query(...)):
         m = await client.get(ipgeo_url)
 
     return {"weather": w.json(), "moon": m.json()}
+
+
+# -----------------------------------------------------------
+# NEW: /iss-location (ISS Tracking)
+# -----------------------------------------------------------
+
+@app.get("/iss-location")
+async def iss_location():
+    url = "http://api.open-notify.org/iss-now.json"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(url, timeout=10)
+            resp.raise_for_status()
+        except Exception:
+            raise HTTPException(status_code=500, detail="ISS API request failed.")
+
+    raw = resp.json()
+
+    ts = raw.get("timestamp")
+    pos = raw.get("iss_position", {})
+
+    lat_raw = pos.get("latitude")
+    lon_raw = pos.get("longitude")
+
+    try:
+        lat = float(lat_raw)
+        lon = float(lon_raw)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Invalid ISS position data.")
+
+    return {
+        "source": "open-notify",
+        "timestamp": ts,
+        "iss_position": {
+            "latitude": lat,
+            "longitude": lon
+        }
+    }
