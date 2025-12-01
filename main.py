@@ -1,116 +1,101 @@
-from fastapi import FastAPI
 import os
-import httpx
-from bs4 import BeautifulSoup
-import pytz
 import requests
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
+# ---------------------------------------------------------
+# CORS
+# ---------------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# ------------------------------------------------------------
-# Weather Endpoint
-# ------------------------------------------------------------
+# ---------------------------------------------------------
+# Environment Variables
+# ---------------------------------------------------------
+IPGEO_API_KEY = os.getenv("IPGEO_API_KEY")   # ← Correct variable name
+NASA_API_KEY = os.getenv("NASA_API_KEY")
 
-@app.get("/weather")
-async def get_weather(lat: float, lon: float):
-    """Return current weather."""
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
-    async with httpx.AsyncClient() as client:
-        r = await client.get(url, timeout=10.0)
-        data = r.json()
-    return data
+# ---------------------------------------------------------
+# Root
+# ---------------------------------------------------------
+@app.get("/")
+def root():
+    return {"message": "Astra One API running"}
 
-
-# ------------------------------------------------------------
-# Moon Endpoint
-# ------------------------------------------------------------
-
-@app.get("/moon")
-async def get_moon(lat: float, lon: float):
-    """Return basic moon info from IPGeolocation."""
-    api_key = os.getenv("IPGEO_KEY")
-    url = f"https://api.ipgeolocation.io/astronomy?apiKey={api_key}&lat={lat}&long={lon}"
-
-    async with httpx.AsyncClient() as client:
-        r = await client.get(url, timeout=10.0)
-        data = r.json()
-
-    return data
-
-
-# ------------------------------------------------------------
-# ISS Tracker
-# ------------------------------------------------------------
-
-@app.get("/iss")
-async def get_iss_position():
-    """Return current ISS position."""
-    url = "http://api.open-notify.org/iss-now.json"
-
-    async with httpx.AsyncClient() as client:
-        r = await client.get(url, timeout=10.0)
-        data = r.json()
-
-    return {
-        "timestamp": data.get("timestamp"),
-        "latitude": data.get("iss_position", {}).get("latitude"),
-        "longitude": data.get("iss_position", {}).get("longitude")
-    }
-
-
-# ------------------------------------------------------------
-# NASA APOD Helper
-# ------------------------------------------------------------
-
-async def fetch_apod():
-    """Fetch NASA Astronomy Picture of the Day."""
-    api_key = os.getenv("NASA_KEY", "DEMO_KEY")
-    url = f"https://api.nasa.gov/planetary/apod?api_key={api_key}"
-
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, timeout=10.0)
-            data = r.json()
-        return {
-            "title": data.get("title"),
-            "description": data.get("explanation"),
-            "image_url": data.get("url"),
-            "date": data.get("date")
-        }
-    except:
-        return {
-            "title": None,
-            "description": None,
-            "image_url": None,
-            "date": None,
-            "error": "NASA APOD request failed."
-        }
-
-
-# ------------------------------------------------------------
-# sky-photo Endpoint (NASA APOD)
-# ------------------------------------------------------------
-
-@app.get("/sky-photo")
-async def sky_photo():
-    """Return today's NASA sky photo info."""
-    return await fetch_apod()
-
-
-# ------------------------------------------------------------
-# Health Check
-# ------------------------------------------------------------
-
+# ---------------------------------------------------------
+# Health
+# ---------------------------------------------------------
 @app.get("/health")
-async def health():
+def health():
     return {"status": "ok"}
 
+# ---------------------------------------------------------
+# Weather (Open-Meteo)
+# ---------------------------------------------------------
+@app.get("/weather")
+def weather(lat: float, lon: float):
+    url = (
+        "https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}&longitude={lon}"
+        "&current_weather=true"
+    )
+    r = requests.get(url, timeout=10)
+    return r.json()
 
-# ------------------------------------------------------------
-# Run locally (ignored by Render)
-# ------------------------------------------------------------
+# ---------------------------------------------------------
+# Moon (IPGeolocation - requires paid Astronomy upgrade)
+# ---------------------------------------------------------
+@app.get("/moon")
+def moon(lat: float, lon: float):
+    if not IPGEO_API_KEY:
+        return {"error": "Missing IPGEO_API_KEY"}
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    url = (
+        "https://api.ipgeolocation.io/astronomy"
+        f"?apiKey={IPGEO_API_KEY}"
+        f"&lat={lat}&long={lon}"
+    )
+
+    r = requests.get(url, timeout=10)
+    return r.json()
+
+# ---------------------------------------------------------
+# ISS Location
+# ---------------------------------------------------------
+@app.get("/iss")
+def iss_location():
+    url = "http://api.open-notify.org/iss-now.json"
+    r = requests.get(url, timeout=10)
+    return r.json()
+
+# ---------------------------------------------------------
+# NASA APOD
+# ---------------------------------------------------------
+@app.get("/apod")
+def apod():
+    if not NASA_API_KEY:
+        return {"error": "Missing NASA_API_KEY"}
+
+    url = (
+        "https://api.nasa.gov/planetary/apod"
+        f"?api_key={NASA_API_KEY}"
+    )
+    r = requests.get(url, timeout=10)
+    return r.json()
+
+# ---------------------------------------------------------
+# Sky Photo (Static Rule)
+# ---------------------------------------------------------
+@app.get("/sky-photo")
+def sky_photo():
+    return {
+        "photo_url":
+        "https://upload.wikimedia.org/wikipedia/commons/0/0c/ESO_-_Milky_Way.jpg"
+    }
