@@ -1,19 +1,17 @@
 from fastapi import FastAPI
-from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 import requests
 import os
 
 # ---------------------------------------------------------
-# App initialization
+# App setup
 # ---------------------------------------------------------
-
 app = FastAPI()
 
 # ---------------------------------------------------------
-# CORS (required for GPT Actions / browser calls)
+# CORS (open for Astra actions)
 # ---------------------------------------------------------
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,28 +21,74 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------
-# Environment variables
+# Environment Variables
 # ---------------------------------------------------------
-
 IPGEO_API_KEY = os.getenv("IPGEO_API_KEY")
 NASA_API_KEY = os.getenv("NASA_API_KEY")
 
 # ---------------------------------------------------------
 # Root / Health
 # ---------------------------------------------------------
-
 @app.get("/")
 def root():
     return {"message": "Astra Proxy API running"}
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+# ---------------------------------------------------------
+# Geocoding (IPGeolocation)
+# ---------------------------------------------------------
+@app.get("/geocode")
+def geocode(city: str, state: str, country: str = "US"):
+    if not IPGEO_API_KEY:
+        return Response(
+            '{"error":"IPGEO_API_KEY not configured"}',
+            status_code=500,
+            mimetype="application/json"
+        )
+
+    url = (
+        "https://api.ipgeolocation.io/geocoding"
+        f"?apiKey={IPGEO_API_KEY}"
+        f"&city={city}"
+        f"&state_prov={state}"
+        f"&country={country}"
+    )
+
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return Response(
+            '{"error":"Geocoding service unavailable"}',
+            status_code=502,
+            mimetype="application/json"
+        )
+
+    if not isinstance(data, list) or len(data) == 0:
+        return Response(
+            '{"error":"Location not found"}',
+            status_code=404,
+            mimetype="application/json"
+        )
+
+    item = data[0]
+
+    if "latitude" not in item or "longitude" not in item:
+        return Response(
+            '{"error":"Invalid geocoding response"}',
+            status_code=502,
+            mimetype="application/json"
+        )
+
+    return {
+        "lat": float(item["latitude"]),
+        "lon": float(item["longitude"]),
+        "confidence": "city-state"
+    }
 
 # ---------------------------------------------------------
-# Weather (Parsed JSON – normal use)
+# Weather (Open-Meteo — parsed JSON)
 # ---------------------------------------------------------
-
 @app.get("/weather")
 def weather(lat: float, lon: float):
     url = (
@@ -58,9 +102,8 @@ def weather(lat: float, lon: float):
     return r.json()
 
 # ---------------------------------------------------------
-# Weather (RAW – GPT Action passthrough)
+# Weather RAW (Open-Meteo — text/plain, no interpretation)
 # ---------------------------------------------------------
-
 @app.get("/weather-raw")
 def weather_raw(lat: float, lon: float):
     url = (
@@ -72,7 +115,7 @@ def weather_raw(lat: float, lon: float):
     r = requests.get(url, timeout=10)
 
     return Response(
-        content=r.text,
+        r.text,
         status_code=r.status_code,
-        media_type="text/plain"
+        mimetype="text/plain"
     )
