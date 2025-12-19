@@ -1,144 +1,48 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import requests
-import os
+from pydantic import BaseModel
+from typing import Optional
+import uvicorn
 
 app = FastAPI()
 
-# ---------------------------------------------------------
-# CORS
-# ---------------------------------------------------------
+# Optional: Allow all CORS for testing
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------
-# Environment Variables
-# ---------------------------------------------------------
-IPGEO_API_KEY = os.getenv("IPGEO_API_KEY")
+class CurrentWeather(BaseModel):
+    temperature: float
+    windspeed: float
+    winddirection: float
+    weathercode: int
+    is_day: bool
 
-# ---------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------
-def success(endpoint: str, data: dict):
-    return {
-        "ok": True,
-        "service": "astra-proxy",
-        "endpoint": endpoint,
-        "data": data
-    }
+class WeatherResponse(BaseModel):
+    latitude: float
+    longitude: float
+    current_weather: CurrentWeather
 
-def failure(endpoint: str, error_type: str, message: str):
+@app.get("/weather", response_model=WeatherResponse)
+def get_weather(lat: float = Query(...), lon: float = Query(...)):
+    # MOCKED example — replace with real API call to Open-Meteo, etc.
+    # You must map external data into this schema exactly
+
+    # Example values (sunny, 0°C, light wind)
     return {
-        "ok": False,
-        "service": "astra-proxy",
-        "endpoint": endpoint,
-        "error": {
-            "type": error_type,
-            "message": message
+        "latitude": lat,
+        "longitude": lon,
+        "current_weather": {
+            "temperature": 0.0,
+            "windspeed": 12.3,
+            "winddirection": 180.0,
+            "weathercode": 0,  # 0 = Clear (per WMO)
+            "is_day": True
         }
     }
 
-# ---------------------------------------------------------
-# Health Check (Astra Test 1)
-# ---------------------------------------------------------
-@app.get("/health")
-def health():
-    return success(
-        endpoint="/health",
-        data={"status": "running"}
-    )
-
-# ---------------------------------------------------------
-# Root
-# ---------------------------------------------------------
-@app.get("/")
-def root():
-    return success(
-        endpoint="/",
-        data={"message": "Astra Proxy API running"}
-    )
-
-# ---------------------------------------------------------
-# Geocode (City + State → Lat/Lon)
-# ---------------------------------------------------------
-@app.get("/geocode")
-def geocode(city: str, state: str, country: str = "US"):
-    if not IPGEO_API_KEY:
-        return failure(
-            "/geocode",
-            "config_error",
-            "IPGEO_API_KEY not configured"
-        )
-
-    url = "https://api.ipgeolocation.io/geocoding"
-    params = {
-        "apiKey": IPGEO_API_KEY,
-        "city": city,
-        "state_prov": state,
-        "country": country
-    }
-
-    try:
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        payload = r.json()
-
-        if not payload or "latitude" not in payload[0]:
-            return failure(
-                "/geocode",
-                "not_found",
-                "Location not found"
-            )
-
-        location = payload[0]
-
-        return success(
-            "/geocode",
-            {
-                "latitude": float(location["latitude"]),
-                "longitude": float(location["longitude"]),
-                "city": location.get("city"),
-                "state": location.get("state_prov"),
-                "country": location.get("country_name")
-            }
-        )
-
-    except Exception as e:
-        return failure(
-            "/geocode",
-            "upstream_error",
-            str(e)
-        )
-
-# ---------------------------------------------------------
-# Weather (Open-Meteo — Parsed JSON, Astra-safe)
-# ---------------------------------------------------------
-@app.get("/weather")
-def weather(lat: float, lon: float):
-    url = (
-        "https://api.open-meteo.com/v1/forecast"
-        f"?latitude={lat}&longitude={lon}"
-        "&current_weather=true"
-    )
-
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-
-        return success(
-            "/weather",
-            data
-        )
-
-    except Exception as e:
-        return failure(
-            "/weather",
-            "upstream_error",
-            str(e)
-        )
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
