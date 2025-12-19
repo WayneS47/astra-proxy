@@ -1,13 +1,19 @@
-import os
-import requests
 from fastapi import FastAPI
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
+import requests
+import os
+
+# ---------------------------------------------------------
+# App initialization
+# ---------------------------------------------------------
 
 app = FastAPI()
 
 # ---------------------------------------------------------
-# CORS
+# CORS (required for GPT Actions / browser calls)
 # ---------------------------------------------------------
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,28 +23,28 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------
-# Environment Variables
+# Environment variables
 # ---------------------------------------------------------
-IPGEO_API_KEY = os.getenv("IPGEO_API_KEY")   # ← Correct variable name
+
+IPGEO_API_KEY = os.getenv("IPGEO_API_KEY")
 NASA_API_KEY = os.getenv("NASA_API_KEY")
 
 # ---------------------------------------------------------
-# Root
+# Root / Health
 # ---------------------------------------------------------
+
 @app.get("/")
 def root():
-    return {"message": "Astra One API running"}
+    return {"message": "Astra Proxy API running"}
 
-# ---------------------------------------------------------
-# Health
-# ---------------------------------------------------------
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 # ---------------------------------------------------------
-# Weather (Open-Meteo)
+# Weather (Parsed JSON – normal use)
 # ---------------------------------------------------------
+
 @app.get("/weather")
 def weather(lat: float, lon: float):
     url = (
@@ -46,56 +52,27 @@ def weather(lat: float, lon: float):
         f"?latitude={lat}&longitude={lon}"
         "&current_weather=true"
     )
+
     r = requests.get(url, timeout=10)
+    r.raise_for_status()
     return r.json()
 
 # ---------------------------------------------------------
-# Moon (IPGeolocation - requires paid Astronomy upgrade)
+# Weather (RAW – GPT Action passthrough)
 # ---------------------------------------------------------
-@app.get("/moon")
-def moon(lat: float, lon: float):
-    if not IPGEO_API_KEY:
-        return {"error": "Missing IPGEO_API_KEY"}
 
+@app.get("/weather-raw")
+def weather_raw(lat: float, lon: float):
     url = (
-        "https://api.ipgeolocation.io/astronomy"
-        f"?apiKey={IPGEO_API_KEY}"
-        f"&lat={lat}&long={lon}"
+        "https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}&longitude={lon}"
+        "&current_weather=true"
     )
 
     r = requests.get(url, timeout=10)
-    return r.json()
 
-# ---------------------------------------------------------
-# ISS Location
-# ---------------------------------------------------------
-@app.get("/iss")
-def iss_location():
-    url = "http://api.open-notify.org/iss-now.json"
-    r = requests.get(url, timeout=10)
-    return r.json()
-
-# ---------------------------------------------------------
-# NASA APOD
-# ---------------------------------------------------------
-@app.get("/apod")
-def apod():
-    if not NASA_API_KEY:
-        return {"error": "Missing NASA_API_KEY"}
-
-    url = (
-        "https://api.nasa.gov/planetary/apod"
-        f"?api_key={NASA_API_KEY}"
+    return Response(
+        content=r.text,
+        status_code=r.status_code,
+        media_type="text/plain"
     )
-    r = requests.get(url, timeout=10)
-    return r.json()
-
-# ---------------------------------------------------------
-# Sky Photo (Static Rule)
-# ---------------------------------------------------------
-@app.get("/sky-photo")
-def sky_photo():
-    return {
-        "photo_url":
-        "https://upload.wikimedia.org/wikipedia/commons/0/0c/ESO_-_Milky_Way.jpg"
-    }
