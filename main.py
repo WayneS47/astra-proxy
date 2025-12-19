@@ -7,7 +7,7 @@ import uvicorn
 
 app = FastAPI()
 
-# Optional: Allow all CORS (for testing and external calls)
+# CORS settings (for Swagger, browser-based tools, etc.)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,13 +15,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ===== WEATHER SCHEMA =====
+# ===== SCHEMAS =====
 
 class CurrentWeather(BaseModel):
     temperature: float
     windspeed: float
     winddirection: float
-    weathercode: int  # WMO Code (0 = Clear, etc.)
+    weathercode: int
     is_day: bool
 
 class WeatherResponse(BaseModel):
@@ -29,14 +29,12 @@ class WeatherResponse(BaseModel):
     longitude: float
     current_weather: CurrentWeather
 
-# ===== GEOCODE SCHEMA =====
-
 class GeocodeResponse(BaseModel):
     lat: float
     lon: float
     confidence: Literal["exact", "approximate"]
 
-# ===== /weather ENDPOINT (LIVE) =====
+# ===== /weather ENDPOINT (LIVE FROM OPEN-METEO) =====
 
 @app.get("/weather", response_model=WeatherResponse)
 def get_weather(lat: float = Query(...), lon: float = Query(...)):
@@ -62,22 +60,34 @@ def get_weather(lat: float = Query(...), lon: float = Query(...)):
         "current_weather": data["current_weather"]
     }
 
-# ===== /geocode ENDPOINT (STATIC DEMO) =====
+# ===== /geocode ENDPOINT (LIVE FROM NOMINATIM) =====
 
 @app.get("/geocode", response_model=GeocodeResponse)
-def geocode_location(
-    city: str = Query(...),
-    state: str = Query(...)
-):
-    # Example: support only Franklin, TN
-    if city.lower() == "franklin" and state.lower() == "tn":
-        return {
-            "lat": 35.93,
-            "lon": -86.82,
-            "confidence": "exact"
-        }
-    else:
+def geocode_location(city: str = Query(...), state: str = Query(...)):
+    query = f"{city}, {state}, USA"
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {
+        "q": query,
+        "format": "json",
+        "limit": 1
+    }
+    headers = {"User-Agent": "astra-weather-proxy/1.0"}
+
+    try:
+        response = httpx.get(url, params=params, headers=headers, timeout=10.0)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Geocoding service error: {str(e)}")
+
+    if not data:
         raise HTTPException(status_code=404, detail="City/state not found")
+
+    return {
+        "lat": float(data[0]["lat"]),
+        "lon": float(data[0]["lon"]),
+        "confidence": "approximate"
+    }
 
 # ===== LOCAL RUN =====
 
