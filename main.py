@@ -4,6 +4,8 @@ from pydantic import BaseModel
 from typing import Literal
 import httpx
 import uvicorn
+from fastapi.responses import PlainTextResponse
+import json
 
 app = FastAPI()
 
@@ -17,27 +19,15 @@ app.add_middleware(
 
 # ===== SCHEMAS =====
 
-class CurrentWeather(BaseModel):
-    temperature: float
-    windspeed: float
-    winddirection: float
-    weathercode: int
-    is_day: bool
-
-class WeatherResponse(BaseModel):
-    latitude: float
-    longitude: float
-    current_weather: CurrentWeather
-
 class GeocodeResponse(BaseModel):
     lat: float
     lon: float
     confidence: Literal["exact", "approximate"]
 
-# ===== /weather ENDPOINT (LIVE FROM OPEN-METEO) =====
+# ===== /weather-raw ENDPOINT (OPAQUE WEATHER PAYLOAD) =====
 
-@app.get("/weather", response_model=WeatherResponse)
-def get_weather(lat: float = Query(...), lon: float = Query(...)):
+@app.get("/weather-raw", response_class=PlainTextResponse)
+def get_weather_raw(lat: float = Query(...), lon: float = Query(...)):
     try:
         url = "https://api.open-meteo.com/v1/forecast"
         params = {
@@ -47,18 +37,11 @@ def get_weather(lat: float = Query(...), lon: float = Query(...)):
         }
         response = httpx.get(url, params=params, timeout=10.0)
         response.raise_for_status()
-        data = response.json()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Weather service error: {str(e)}")
 
-    if "current_weather" not in data:
-        raise HTTPException(status_code=404, detail="No current weather data available.")
-
-    return {
-        "latitude": data["latitude"],
-        "longitude": data["longitude"],
-        "current_weather": data["current_weather"]
-    }
+    # Return opaque raw JSON text
+    return response.text
 
 # ===== /geocode ENDPOINT (LIVE FROM NOMINATIM) =====
 
