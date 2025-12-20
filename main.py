@@ -1,82 +1,89 @@
-from fastapi import FastAPI, Query
-from pydantic import BaseModel
-from typing import Optional
-import requests
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
+import uvicorn
 
-app = FastAPI(
-    title="Astra Weather Actions",
-    version="1.0.0",
-    description="Model-safe weather schema for Astra. All orchestration happens server-side. Weather and Moon data returned as opaque text payload.",
-    servers=[{"url": "https://astra-proxy.onrender.com"}],
+app = FastAPI()
+
+# CORS (safe for Actions)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# ----------------------------
-# Request schemas
-# ----------------------------
+# =========================
+# GET /weather
+# =========================
+# Accepts: city, state
+# Performs: geocoding + weather lookup internally
+# Astra makes ONE call only
+# =========================
 
-class LatLonRequest(BaseModel):
-    lat: float
-    lon: float
-
-# ----------------------------
-# /geocodeLocation
-# ----------------------------
-
-@app.get("/geocodeLocation", operation_id="geocodeLocation", summary="Convert place name to coordinates")
-def geocode_location(city: str = Query(...), state: str = Query(...), country: Optional[str] = "US"):
-    response = requests.get(
-        "https://nominatim.openstreetmap.org/search",
-        params={
-            "q": f"{city}, {state}, {country}",
-            "format": "json",
-            "limit": 1
-        },
-        headers={"User-Agent": "astra-bot"}
-    )
-    data = response.json()
-    if not data:
-        return {}
-
-    result = {
-        "lat": float(data[0]["lat"]),
-        "lon": float(data[0]["lon"]),
-        "confidence": "approximate"
+@app.get("/weather")
+def get_weather(
+    city: str = Query(..., description="City name"),
+    state: str = Query(..., description="State abbreviation or name")
+):
+    # ---- Geocode (Nominatim) ----
+    geocode_url = "https://nominatim.openstreetmap.org/search"
+    geocode_params = {
+        "q": f"{city}, {state}, USA",
+        "format": "json",
+        "limit": 1
     }
-    return result
+    geocode_headers = {
+        "User-Agent": "astra-proxy-weather/1.0"
+    }
 
-# ----------------------------
-# /getWeatherRaw
-# ----------------------------
+    try:
+        geo_resp = httpx.get(
+            geocode_url,
+            params=geocode_params,
+            headers=geocode_headers,
+            timeout=10.0
+        )
+        geo_resp.raise_for_status()
+        geo_data = geo_resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Geocoding failed: {str(e)}")
 
-@app.post("/getWeatherRaw", operation_id="getWeatherRaw", summary="Retrieve raw weather JSON as an opaque string")
-def get_weather_raw(body: LatLonRequest):
-    response = requests.get(
-        "https://api.open-meteo.com/v1/forecast",
-        params={
-            "latitude": body.lat,
-            "longitude": body.lon,
-            "current_weather": True
-        }
-    )
-    return response.json()
+    if not geo_data:
+        raise HTTPException(status_code=404, detail="Location not found")
 
-# ----------------------------
-# /getMoon
-# ----------------------------
+    lat = float(geo_data[0]["lat"])
+    lon = float(geo_data[0]["lon"])
 
-@app.post("/getMoon", operation_id="getMoon", summary="Retrieve current moon data")
-def get_moon(body: LatLonRequest):
-    response = requests.get(
-        "https://api.astronomyapi.com/api/v2/bodies/positions/moon",
-        params={
-            "latitude": body.lat,
-            "longitude": body.lon,
-            "from_date": "2025-12-20",  # Optional: dynamic date logic
-            "to_date": "2025-12-20",
-            "elevation": 0
-        },
-        headers={
-            "Authorization": "Basic YOUR_API_KEY_HERE"
-        }
-    )
-    return response.json()
+    # ---- Weather (Open-Meteo) ----
+    weather_url = "https://api.open-meteo.com/v1/forecast"
+    weather_params = {
+        "latitude": lat,
+        "longitude": lon,
+        "current_weather": "true"
+    }
+
+    try:
+        weather_resp = httpx.get(
+            weather_url,
+            params=weather_params,
+            timeout=10.0
+        )
+        weather_resp.raise_for_status()
+        weather_data = weather_resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Weather service failed: {str(e)}")
+
+    if "current_weather" not in weather_data:
+        raise HTTPException(status_code=502, detail="Weather data unavailable")
+
+    return {
+        "location": f"{city}, {state}",
+        "latitude": lat,
+        "longitude": lon,
+        "current_weather": weather_data["current_weather"]
+    }
+
+# ===== Local run =====
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
