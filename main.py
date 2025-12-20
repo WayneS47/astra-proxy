@@ -13,13 +13,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =========================
+# =================================================
 # GET /weather
-# =========================
 # Accepts: city, state
 # Performs: geocoding + weather lookup internally
-# Astra makes ONE call only
-# =========================
+# Astra calls ONE endpoint only
+# =================================================
 
 @app.get("/weather")
 def get_weather(
