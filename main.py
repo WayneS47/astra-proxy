@@ -2,6 +2,8 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import uvicorn
+from datetime import datetime, timezone
+import math
 
 app = FastAPI()
 
@@ -17,7 +19,7 @@ app.add_middleware(
 # GET /weather
 # Accepts: city, state
 # Performs: geocoding + weather lookup internally
-# Astra calls ONE endpoint only
+# Astra calls ONE endpoint for weather
 # =================================================
 
 @app.get("/weather")
@@ -82,6 +84,83 @@ def get_weather(
         "longitude": lon,
         "current_weather": weather_data["current_weather"]
     }
+
+
+# =================================================
+# GET /moon
+# Accepts: optional date (YYYY-MM-DD). Defaults to today (UTC).
+# Returns: deterministic moon phase approximation
+# Notes:
+# - No external API calls.
+# - Phase is global; does not require location.
+# =================================================
+
+def _parse_date_utc(date_str: str | None) -> datetime:
+    if not date_str:
+        return datetime.now(timezone.utc)
+    try:
+        # Interpret provided date as midnight UTC
+        return datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+def _moon_phase_approx(dt: datetime):
+    """
+    Deterministic approximation using a synodic month length.
+    Output:
+      - phase_name (string)
+      - age_days (float)
+      - illumination (float 0..1)
+    """
+    # Reference new moon (UTC): 2000-01-06 18:14
+    ref = datetime(2000, 1, 6, 18, 14, tzinfo=timezone.utc)
+
+    # Synodic month length (days)
+    synodic_month = 29.530588853
+
+    delta_days = (dt - ref).total_seconds() / 86400.0
+    age = delta_days % synodic_month  # days since new moon in current cycle
+
+    # Illumination fraction approximation (0..1)
+    # 0 at new moon, 1 at full moon
+    phase_angle = 2.0 * math.pi * (age / synodic_month)
+    illumination = (1.0 - math.cos(phase_angle)) / 2.0
+
+    # Name buckets by age
+    # (simple, readable categories)
+    if age < 1.0:
+        name = "New Moon"
+    elif age < 6.382:
+        name = "Waxing Crescent"
+    elif age < 8.382:
+        name = "First Quarter"
+    elif age < 13.765:
+        name = "Waxing Gibbous"
+    elif age < 15.765:
+        name = "Full Moon"
+    elif age < 21.147:
+        name = "Waning Gibbous"
+    elif age < 23.147:
+        name = "Last Quarter"
+    else:
+        name = "Waning Crescent"
+
+    return name, age, illumination
+
+@app.get("/moon")
+def get_moon(
+    date: str | None = Query(None, description="Optional date in YYYY-MM-DD. Defaults to today (UTC).")
+):
+    dt = _parse_date_utc(date)
+    phase_name, age_days, illumination = _moon_phase_approx(dt)
+
+    return {
+        "date_utc": dt.strftime("%Y-%m-%d"),
+        "phase": phase_name,
+        "age_days": round(age_days, 2),
+        "illumination": round(illumination, 3)
+    }
+
 
 # ===== Local run =====
 if __name__ == "__main__":
