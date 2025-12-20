@@ -1,86 +1,82 @@
-openapi: 3.1.0
-info:
-  title: Astra Weather Actions
-  version: 1.0.0
-  description: >
-    Model-safe weather schema for Astra. All orchestration happens server-side.
-    Weather data returned as opaque text payload.
-servers:
-  - url: https://astra-proxy.onrender.com
-paths:
-  /geocode:
-    get:
-      operationId: geocodeLocation
-      summary: Convert place name to coordinates
-      parameters:
-        - name: city
-          in: query
-          required: true
-          schema:
-            type: string
-          description: City name
-        - name: state
-          in: query
-          required: true
-          schema:
-            type: string
-          description: State abbreviation or name
-      responses:
-        '200':
-          description: Coordinates resolved
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - lat
-                  - lon
-                  - confidence
-                properties:
-                  lat:
-                    type: number
-                    description: Latitude in decimal degrees
-                  lon:
-                    type: number
-                    description: Longitude in decimal degrees
-                  confidence:
-                    type: string
-                    enum:
-                      - exact
-                      - approximate
-                    description: Geocoding confidence level
-        '400':
-          description: Invalid or missing parameters
-        '502':
-          description: Geocoding service unavailable
-  /weather-raw:
-    get:
-      operationId: getWeatherRaw
-      summary: Retrieve raw weather data as opaque string
-      parameters:
-        - name: lat
-          in: query
-          required: true
-          schema:
-            type: number
-          description: Latitude in decimal degrees
-        - name: lon
-          in: query
-          required: true
-          schema:
-            type: number
-          description: Longitude in decimal degrees
-      responses:
-        '200':
-          description: Raw weather payload
-          content:
-            text/plain:
-              schema:
-                type: string
-                description: >
-                  Opaque string containing full weather payload.
-                  Must not be interpreted or reformatted by the model.
-        '400':
-          description: Invalid or missing parameters
-        '502':
-          description: Weather service unavailable
+from fastapi import FastAPI, Query
+from pydantic import BaseModel
+from typing import Optional
+import requests
+
+app = FastAPI(
+    title="Astra Weather Actions",
+    version="1.0.0",
+    description="Model-safe weather schema for Astra. All orchestration happens server-side. Weather and Moon data returned as opaque text payload.",
+    servers=[{"url": "https://astra-proxy.onrender.com"}],
+)
+
+# ----------------------------
+# Request schemas
+# ----------------------------
+
+class LatLonRequest(BaseModel):
+    lat: float
+    lon: float
+
+# ----------------------------
+# /geocodeLocation
+# ----------------------------
+
+@app.get("/geocodeLocation", operation_id="geocodeLocation", summary="Convert place name to coordinates")
+def geocode_location(city: str = Query(...), state: str = Query(...), country: Optional[str] = "US"):
+    response = requests.get(
+        "https://nominatim.openstreetmap.org/search",
+        params={
+            "q": f"{city}, {state}, {country}",
+            "format": "json",
+            "limit": 1
+        },
+        headers={"User-Agent": "astra-bot"}
+    )
+    data = response.json()
+    if not data:
+        return {}
+
+    result = {
+        "lat": float(data[0]["lat"]),
+        "lon": float(data[0]["lon"]),
+        "confidence": "approximate"
+    }
+    return result
+
+# ----------------------------
+# /getWeatherRaw
+# ----------------------------
+
+@app.post("/getWeatherRaw", operation_id="getWeatherRaw", summary="Retrieve raw weather JSON as an opaque string")
+def get_weather_raw(body: LatLonRequest):
+    response = requests.get(
+        "https://api.open-meteo.com/v1/forecast",
+        params={
+            "latitude": body.lat,
+            "longitude": body.lon,
+            "current_weather": True
+        }
+    )
+    return response.json()
+
+# ----------------------------
+# /getMoon
+# ----------------------------
+
+@app.post("/getMoon", operation_id="getMoon", summary="Retrieve current moon data")
+def get_moon(body: LatLonRequest):
+    response = requests.get(
+        "https://api.astronomyapi.com/api/v2/bodies/positions/moon",
+        params={
+            "latitude": body.lat,
+            "longitude": body.lon,
+            "from_date": "2025-12-20",  # Optional: dynamic date logic
+            "to_date": "2025-12-20",
+            "elevation": 0
+        },
+        headers={
+            "Authorization": "Basic YOUR_API_KEY_HERE"
+        }
+    )
+    return response.json()
