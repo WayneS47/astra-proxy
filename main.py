@@ -21,7 +21,14 @@ app.add_middleware(
 )
 
 # =================================================
-# Simple In-Memory Cache (TTL-based)
+# Observability Logging
+# =================================================
+
+def log(msg: str):
+    print(f"[{datetime.utcnow().isoformat()}Z] {msg}")
+
+# =================================================
+# Simple In-Memory Cache (TTL)
 # =================================================
 
 CACHE = {}
@@ -85,14 +92,20 @@ def weathercode_to_sky(code: int) -> str:
 # =================================================
 
 @app.get("/weather")
-def get_weather(
-    city: str = Query(..., description="City name"),
-    state: str = Query(..., description="State name or abbreviation")
-):
-    cache_key = f"weather:{city.lower()}:{state.lower()}"
+def get_weather(city: str = Query(...), state: str = Query(...)):
+    start = time()
+    city_l = city.lower()
+    state_l = state.lower()
+    cache_key = f"weather:{city_l}:{state_l}"
+
+    log(f"WEATHER request city={city_l} state={state_l}")
+
     cached = get_cache(cache_key)
     if cached:
+        log(f"WEATHER cache HIT city={city_l} state={state_l}")
         return cached
+
+    log(f"WEATHER cache MISS city={city_l} state={state_l}")
 
     geocode_url = "https://nominatim.openstreetmap.org/search"
     geocode_params = {
@@ -107,7 +120,8 @@ def get_weather(
         geo_resp.raise_for_status()
         geo = geo_resp.json()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Geocoding failed: {str(e)}")
+        log(f"WEATHER geocoding ERROR {str(e)}")
+        raise HTTPException(status_code=502, detail="Geocoding failed")
 
     if not geo:
         raise HTTPException(status_code=404, detail="Location not found")
@@ -127,7 +141,8 @@ def get_weather(
         w_resp.raise_for_status()
         data = w_resp.json()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Weather service failed: {str(e)}")
+        log(f"WEATHER upstream ERROR {str(e)}")
+        raise HTTPException(status_code=502, detail="Weather service failed")
 
     cw = data.get("current_weather")
     if not cw:
@@ -148,6 +163,9 @@ def get_weather(
     }
 
     set_cache(cache_key, response, ttl_seconds=90)
+    elapsed = int((time() - start) * 1000)
+    log(f"WEATHER completed in {elapsed}ms")
+
     return response
 
 # =================================================
@@ -182,7 +200,7 @@ def moon_info(target: date):
     return phase, round(illumination, 1), round(age, 1)
 
 @app.get("/moon")
-def get_moon(moon_date: str | None = Query(None, description="YYYY-MM-DD (optional)")):
+def get_moon(moon_date: str | None = Query(None)):
     target = date.today()
     if moon_date:
         try:
@@ -191,8 +209,11 @@ def get_moon(moon_date: str | None = Query(None, description="YYYY-MM-DD (option
             raise HTTPException(status_code=400, detail="Invalid date format")
 
     cache_key = f"moon:{target.isoformat()}"
+    log(f"MOON request date={target.isoformat()}")
+
     cached = get_cache(cache_key)
     if cached:
+        log(f"MOON cache HIT date={target.isoformat()}")
         return cached
 
     phase, illumination, age = moon_info(target)
@@ -205,6 +226,8 @@ def get_moon(moon_date: str | None = Query(None, description="YYYY-MM-DD (option
     }
 
     set_cache(cache_key, response, ttl_seconds=86400)
+    log("MOON completed")
+
     return response
 
 # =================================================
@@ -212,14 +235,20 @@ def get_moon(moon_date: str | None = Query(None, description="YYYY-MM-DD (option
 # =================================================
 
 @app.get("/apod")
-def get_apod(apod_date: str | None = Query(None, description="YYYY-MM-DD (optional)")):
-    cache_key = f"apod:{apod_date or 'today'}"
+def get_apod(apod_date: str | None = Query(None)):
+    key_date = apod_date or "today"
+    cache_key = f"apod:{key_date}"
+
+    log(f"APOD request date={key_date}")
+
     cached = get_cache(cache_key)
     if cached:
+        log(f"APOD cache HIT date={key_date}")
         return cached
 
     api_key = os.getenv("NASA_API_KEY")
     if not api_key:
+        log("APOD ERROR missing NASA_API_KEY")
         raise HTTPException(status_code=500, detail="NASA API key not configured")
 
     params = {"api_key": api_key}
@@ -231,7 +260,8 @@ def get_apod(apod_date: str | None = Query(None, description="YYYY-MM-DD (option
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"NASA APOD failed: {str(e)}")
+        log(f"APOD upstream ERROR {str(e)}")
+        raise HTTPException(status_code=502, detail="NASA APOD failed")
 
     response = {
         "date": data.get("date"),
@@ -244,20 +274,29 @@ def get_apod(apod_date: str | None = Query(None, description="YYYY-MM-DD (option
 
     ttl = 3600 if not apod_date else 86400
     set_cache(cache_key, response, ttl)
+    log("APOD completed")
+
     return response
 
 # =================================================
-# ISS (No API key required)
+# ISS (live, no cache)
 # =================================================
 
 @app.get("/iss")
 def get_iss():
+    start = time()
+    log("ISS request")
+
     try:
         resp = httpx.get("https://api.wheretheiss.at/v1/satellites/25544", timeout=10)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"ISS service failed: {str(e)}")
+        log(f"ISS ERROR {str(e)}")
+        raise HTTPException(status_code=502, detail="ISS service failed")
+
+    elapsed = int((time() - start) * 1000)
+    log(f"ISS completed in {elapsed}ms")
 
     return {
         "timestamp": data["timestamp"],
