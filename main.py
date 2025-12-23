@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import uvicorn
@@ -8,8 +8,6 @@ import os
 from time import time
 
 app = FastAPI()
-
-# main.py — unified with caching and observability
 
 # =================================================
 # CORS (safe for GPT Actions)
@@ -23,14 +21,15 @@ app.add_middleware(
 )
 
 # =================================================
-# Observability Logging
+# Simple Logging
 # =================================================
 
-def log(msg: str):
-    print(f"[{datetime.utcnow().isoformat()}Z] {msg}")
+def log(message: str):
+    ts = datetime.now(timezone.utc).isoformat()
+    print(f"[{ts}] {message}", flush=True)
 
 # =================================================
-# Simple In-Memory Cache (TTL)
+# Simple In-Memory Cache (TTL-based)
 # =================================================
 
 CACHE = {}
@@ -49,7 +48,32 @@ def set_cache(key: str, value, ttl_seconds: int):
     CACHE[key] = (value, time() + ttl_seconds)
 
 # =================================================
-# Helper Functions
+# Rate Limiting (Per IP)
+# =================================================
+
+RATE_LIMIT = {}
+RATE_LIMIT_WINDOW = 60      # seconds
+RATE_LIMIT_MAX = 60         # requests per window
+
+def check_rate_limit(request: Request):
+    ip = request.client.host if request.client else "unknown"
+    now = time()
+
+    window = RATE_LIMIT.get(ip, [])
+    window = [ts for ts in window if now - ts < RATE_LIMIT_WINDOW]
+
+    if len(window) >= RATE_LIMIT_MAX:
+        log(f"RATE LIMIT exceeded for IP {ip}")
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please slow down."
+        )
+
+    window.append(now)
+    RATE_LIMIT[ip] = window
+
+# =================================================
+# Helpers
 # =================================================
 
 def km_to_miles(km: float) -> float:
@@ -75,16 +99,16 @@ def deg_to_compass_16(deg: float) -> str:
 def weathercode_to_sky(code: int) -> str:
     if code == 0:
         return "Clear"
-    if code in (1, 2):
-        return "Partly Cloudy"
-    if code == 3:
-        return "Cloudy"
+    if code in (1, 2, 3):
+        return "Partly Cloudy" if code in (1, 2) else "Cloudy"
     if code in (45, 48):
         return "Fog"
     if code in (61, 63, 65):
         return "Rain"
     if code in (71, 73, 75):
         return "Snow"
+    if code in (80, 81, 82):
+        return "Rain Showers"
     if code in (95, 96, 99):
         return "Thunderstorm"
     return "Unknown"
@@ -94,56 +118,47 @@ def weathercode_to_sky(code: int) -> str:
 # =================================================
 
 @app.get("/weather")
-def get_weather(city: str = Query(...), state: str = Query(...)):
-    start = time()
-    city_l = city.lower()
-    state_l = state.lower()
-    cache_key = f"weather:{city_l}:{state_l}"
-
-    log(f"WEATHER request city={city_l} state={state_l}")
-
+def get_weather(
+    request: Request,
+    city: str = Query(...),
+    state: str = Query(...),
+    _: None = Depends(check_rate_limit)
+):
+    cache_key = f"weather:{city}:{state}"
     cached = get_cache(cache_key)
     if cached:
-        log(f"WEATHER cache HIT city={city_l} state={state_l}")
+        log("WEATHER cache hit")
         return cached
 
-    log(f"WEATHER cache MISS city={city_l} state={state_l}")
+    log("WEATHER request")
 
     geocode_url = "https://nominatim.openstreetmap.org/search"
-    geocode_params = {
-        "q": f"{city}, {state}, USA",
-        "format": "json",
-        "limit": 1
-    }
+    geocode_params = {"q": f"{city}, {state}", "format": "json", "limit": 1}
     headers = {"User-Agent": "astra-proxy/1.0"}
 
     try:
-        geo_resp = httpx.get(geocode_url, params=geocode_params, headers=headers, timeout=10)
-        geo_resp.raise_for_status()
-        geo = geo_resp.json()
+        geo = httpx.get(geocode_url, params=geocode_params, headers=headers, timeout=10)
+        geo.raise_for_status()
+        geo = geo.json()
     except Exception as e:
-        log(f"WEATHER geocoding ERROR {str(e)}")
+        log(f"WEATHER geocode error: {e}")
         raise HTTPException(status_code=502, detail="Geocoding failed")
 
     if not geo:
         raise HTTPException(status_code=404, detail="Location not found")
 
-    lat = float(geo[0]["lat"])
-    lon = float(geo[0]["lon"])
-
-    weather_url = "https://api.open-meteo.com/v1/forecast"
-    weather_params = {
-        "latitude": lat,
-        "longitude": lon,
-        "current_weather": "true"
-    }
+    lat, lon = float(geo[0]["lat"]), float(geo[0]["lon"])
 
     try:
-        w_resp = httpx.get(weather_url, params=weather_params, timeout=10)
+        w_resp = httpx.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={"latitude": lat, "longitude": lon, "current_weather": "true"},
+            timeout=10
+        )
         w_resp.raise_for_status()
         data = w_resp.json()
     except Exception as e:
-        log(f"WEATHER upstream ERROR {str(e)}")
+        log(f"WEATHER fetch error: {e}")
         raise HTTPException(status_code=502, detail="Weather service failed")
 
     cw = data.get("current_weather")
@@ -151,106 +166,55 @@ def get_weather(city: str = Query(...), state: str = Query(...)):
         raise HTTPException(status_code=502, detail="Weather data unavailable")
 
     response = {
-        "location": f"{city}, {state}",
-        "latitude": lat,
-        "longitude": lon,
         "temperature_c": cw["temperature"],
         "temperature_f": round(c_to_f(cw["temperature"]), 1),
         "wind_kmh": cw["windspeed"],
         "wind_mph": round(kmh_to_mph(cw["windspeed"]), 1),
-        "wind_degrees": cw["winddirection"],
         "wind_direction": deg_to_compass_16(cw["winddirection"]),
-        "sky": weathercode_to_sky(cw.get("weathercode", -1)),
-        "daylight": bool(cw.get("is_day", 0))
+        "sky": weathercode_to_sky(cw["weathercode"]),
+        "daylight": bool(cw["is_day"]),
     }
 
-    set_cache(cache_key, response, ttl_seconds=90)
-    elapsed = int((time() - start) * 1000)
-    log(f"WEATHER completed in {elapsed}ms")
-
+    set_cache(cache_key, response, ttl_seconds=60)
     return response
 
 # =================================================
 # MOON
 # =================================================
 
-def moon_info(target: date):
+@app.get("/moon")
+def get_moon(
+    request: Request,
+    moon_date: str | None = None,
+    _: None = Depends(check_rate_limit)
+):
+    target = date.today() if not moon_date else datetime.strptime(moon_date, "%Y-%m-%d").date()
+
     known_new_moon = datetime(2000, 1, 6, 18, 14, tzinfo=timezone.utc)
     target_dt = datetime(target.year, target.month, target.day, tzinfo=timezone.utc)
 
     synodic = 29.53058867
-    age = ((target_dt - known_new_moon).total_seconds() / 86400.0) % synodic
-    illumination = (1 - math.cos(2 * math.pi * age / synodic)) / 2 * 100
+    age = ((target_dt - known_new_moon).total_seconds() / 86400) % synodic
+    illum = (1 - math.cos(2 * math.pi * age / synodic)) / 2
 
-    if age < 1.85:
-        phase = "New Moon"
-    elif age < 5.54:
-        phase = "Waxing Crescent"
-    elif age < 9.23:
-        phase = "First Quarter"
-    elif age < 12.92:
-        phase = "Waxing Gibbous"
-    elif age < 16.61:
-        phase = "Full Moon"
-    elif age < 20.30:
-        phase = "Waning Gibbous"
-    elif age < 23.99:
-        phase = "Last Quarter"
-    else:
-        phase = "Waning Crescent"
-
-    return phase, round(illumination, 1), round(age, 1)
-
-@app.get("/moon")
-def get_moon(moon_date: str | None = Query(None)):
-    target = date.today()
-    if moon_date:
-        try:
-            target = datetime.strptime(moon_date, "%Y-%m-%d").date()
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid date format")
-
-    cache_key = f"moon:{target.isoformat()}"
-    log(f"MOON request date={target.isoformat()}")
-
-    cached = get_cache(cache_key)
-    if cached:
-        log(f"MOON cache HIT date={target.isoformat()}")
-        return cached
-
-    phase, illumination, age = moon_info(target)
-
-    response = {
+    return {
         "date": target.isoformat(),
-        "phase": phase,
-        "illumination_percent": illumination,
-        "age_days": age
+        "phase": round(age, 1),
+        "illumination_percent": round(illum * 100, 1),
     }
-
-    set_cache(cache_key, response, ttl_seconds=86400)
-    log("MOON completed")
-
-    return response
 
 # =================================================
 # APOD
 # =================================================
 
 @app.get("/apod")
-def get_apod(apod_date: str | None = Query(None)):
-    key_date = apod_date or "today"
-    cache_key = f"apod:{key_date}"
-
-    log(f"APOD request date={key_date}")
-
-    cached = get_cache(cache_key)
-    if cached:
-        log(f"APOD cache HIT date={key_date}")
-        return cached
-
+def get_apod(
+    request: Request,
+    apod_date: str | None = None,
+    _: None = Depends(check_rate_limit)
+):
     api_key = os.getenv("NASA_API_KEY")
     if not api_key:
-        log("APOD ERROR missing NASA_API_KEY")
         raise HTTPException(status_code=500, detail="NASA API key not configured")
 
     params = {"api_key": api_key}
@@ -262,31 +226,20 @@ def get_apod(apod_date: str | None = Query(None)):
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        log(f"APOD upstream ERROR {str(e)}")
-        raise HTTPException(status_code=502, detail="NASA APOD failed")
+        log(f"APOD error: {e}")
+        raise HTTPException(status_code=502, detail="APOD service failed")
 
-    response = {
-        "date": data.get("date"),
-        "title": data.get("title"),
-        "explanation": data.get("explanation"),
-        "media_type": data.get("media_type"),
-        "url": data.get("url"),
-        "hdurl": data.get("hdurl")
-    }
-
-    ttl = 3600 if not apod_date else 86400
-    set_cache(cache_key, response, ttl)
-    log("APOD completed")
-
-    return response
+    return data
 
 # =================================================
 # ISS (live, no cache)
 # =================================================
 
 @app.get("/iss")
-def get_iss():
-    start = time()
+def get_iss(
+    request: Request,
+    _: None = Depends(check_rate_limit)
+):
     log("ISS request")
 
     try:
@@ -294,11 +247,8 @@ def get_iss():
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        log(f"ISS ERROR {str(e)}")
+        log(f"ISS error: {e}")
         raise HTTPException(status_code=502, detail="ISS service failed")
-
-    elapsed = int((time() - start) * 1000)
-    log(f"ISS completed in {elapsed}ms")
 
     return {
         "timestamp": data["timestamp"],
@@ -308,7 +258,7 @@ def get_iss():
         "altitude_miles": round(km_to_miles(data["altitude"]), 1),
         "velocity_kmh": round(data["velocity"], 1),
         "velocity_mph": round(kmh_to_mph(data["velocity"]), 1),
-        "visibility": data.get("visibility")
+        "visibility": data.get("visibility"),
     }
 
 # =================================================
