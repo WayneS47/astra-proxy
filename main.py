@@ -9,6 +9,8 @@ from time import time
 
 app = FastAPI()
 
+# main.py — unified with caching and observability
+
 # =================================================
 # CORS (safe for GPT Actions)
 # =================================================
