@@ -1,6 +1,22 @@
-fastapi
-uvicorn
-httpx
-beautifulsoup4
-pytz
-requests
+# Astra Astronomy API - Python Dependencies
+# Python 3.11+
+
+# Web framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# HTTP client for external API calls
+httpx>=0.25.0
+
+# Astronomy calculations
+skyfield>=1.46
+numpy>=1.24.0
+
+# Data analysis (required for Skyfield's Hipparcos catalog)
+pandas>=2.0.0
+
+# Python standard library enhancements
+python-dateutil>=2.8.2
+
+# Environment variable management
+python-dotenv>=1.0.0
