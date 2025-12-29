@@ -1,4 +1,4 @@
- """
+"""
 Astra Astronomy API Backend
 Complete FastAPI implementation with 9 endpoints for astronomical data.
 
