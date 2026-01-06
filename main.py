@@ -75,7 +75,7 @@ PREWARM_LON = -86.7828
 
 GEOCODE_CACHE: Dict[str, Tuple[float, dict]] = {}
 GEOCODE_TTL_SECONDS = 86400  # 24 hours
-GEOCODE_RETRY_DELAY = 0.15   # seconds (short; do not add noticeable lag)
+GEOCODE_RETRY_DELAY = 0.15  # seconds
 
 US_STATE_MAP = {
     "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
@@ -93,8 +93,10 @@ US_STATE_MAP = {
     "WA": "Washington", "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming"
 }
 
-# Static fallback coordinates for rare geocoding edge cases (last resort, instant, no network)
-# Keep this intentionally small.
+# -------------------------------------------------
+# Static Fallback Coordinates (Last Resort)
+# -------------------------------------------------
+
 STATIC_LOCATION_FALLBACKS = {
     "fairbanks, alaska": (64.8378, -147.7164),
     "fairbanks alaska": (64.8378, -147.7164),
@@ -110,11 +112,6 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 def normalize_location_query(city: str) -> str:
-    """
-    Normalize inputs like:
-    - 'Huntsville, AL' -> 'Huntsville Alabama US'
-    Leaves non-US patterns alone.
-    """
     match = re.match(r"^(.*?),\s*([A-Z]{2})$", city.strip())
     if match:
         city_name = match.group(1).strip()
@@ -145,7 +142,6 @@ async def startup_event():
     await prewarm_weather_cache()
 
 async def prewarm_weather_cache():
-    """Pre-warm weather cache for Brentwood, TN. Must never block startup."""
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
             resp = await client.get(
@@ -198,7 +194,7 @@ async def health_check():
     }
 
 # -------------------------------------------------
-# API: Weather (Connector-safe: always 200)
+# API: Weather (Connector-Safe)
 # -------------------------------------------------
 
 @app.get("/v1/weather")
@@ -209,13 +205,11 @@ async def get_weather(
     key = f"{latitude:.4f}:{longitude:.4f}"
     now = time.time()
 
-    # Cache hit
     if key in WEATHER_CACHE:
         ts, cached = WEATHER_CACHE[key]
         if now - ts < WEATHER_TTL_SECONDS:
             return cached
 
-    # Cache miss -> fetch
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
             resp = await client.get(
@@ -233,7 +227,6 @@ async def get_weather(
 
         current = data.get("current_weather")
         if not current:
-            # Connector-safe error payload
             return {
                 "status": "error",
                 "error": "missing_current_weather",
@@ -261,7 +254,6 @@ async def get_weather(
         return payload
 
     except Exception as e:
-        # Never raise -> prevents "Error talking to connector"
         return {
             "status": "error",
             "error": "weather_fetch_failed",
@@ -271,7 +263,7 @@ async def get_weather(
         }
 
 # -------------------------------------------------
-# API: Geocoding (Normalize + Cache + Retry + Fallback + Connector-safe)
+# API: Geocoding (Connector-Safe)
 # -------------------------------------------------
 
 @app.get("/v1/geocode")
@@ -280,21 +272,17 @@ async def geocode_location(city: str = Query(...)):
     cache_key = city_raw.lower()
     now = time.time()
 
-    # Cache hit
     if cache_key in GEOCODE_CACHE:
         ts, cached = GEOCODE_CACHE[cache_key]
         if now - ts < GEOCODE_TTL_SECONDS:
             return cached
 
-    # 1) STATIC FALLBACK SHORT-CIRCUIT (instant, no network)
-    # This is the critical change for Fairbanks-class reliability.
     if cache_key in STATIC_LOCATION_FALLBACKS:
         lat, lon = STATIC_LOCATION_FALLBACKS[cache_key]
         payload = _static_fallback_payload(city_raw, lat, lon)
         GEOCODE_CACHE[cache_key] = (now, payload)
         return payload
 
-    # Helper to fetch geocoding
     async def fetch(query: str):
         async with httpx.AsyncClient(timeout=4.0) as client:
             r = await client.get(
@@ -307,23 +295,19 @@ async def geocode_location(city: str = Query(...)):
     try:
         normalized = normalize_location_query(city_raw)
 
-        # 2) Primary attempt (+ one quick retry)
         try:
             data = await fetch(normalized)
         except Exception:
             await asyncio.sleep(GEOCODE_RETRY_DELAY)
             data = await fetch(normalized)
 
-        # 3) Fallback attempt: simpler query
         if not data.get("results"):
             simple_city = city_raw.split(",")[0].strip()
             data = await fetch(f"{simple_city} US")
 
-        # 4) No results -> connector-safe "not_found" payload (no 404)
         if not data.get("results"):
             return {
                 "status": "not_found",
-                "error": "geocode_no_results",
                 "query": city_raw,
                 "timestamp": _now_iso()
             }
@@ -344,7 +328,6 @@ async def geocode_location(city: str = Query(...)):
         return payload
 
     except Exception as e:
-        # Never raise -> prevents "Error talking to connector"
         return {
             "status": "error",
             "error": "geocode_failed",
@@ -354,114 +337,8 @@ async def geocode_location(city: str = Query(...)):
         }
 
 # -------------------------------------------------
-# Other APIs (kept minimal; placeholders preserved)
+# Earth Image
 # -------------------------------------------------
-
-@app.get("/v1/moon")
-async def get_moon_phase(
-    date: Optional[str] = None,
-    latitude: Optional[float] = None,
-    longitude: Optional[float] = None
-):
-    return {
-        "status": "ok",
-        "phase": "WAXING_CRESCENT",
-        "illumination": 15.3,
-        "age_days": 3.2,
-        "timestamp": _now_iso()
-    }
-
-@app.get("/v1/iss")
-async def get_iss_position():
-    try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            response = await client.get("http://api.open-notify.org/iss-now.json")
-            response.raise_for_status()
-            data = response.json()
-        return {
-            "status": "ok",
-            "iss_position": data.get("iss_position"),
-            "timestamp": data.get("timestamp"),
-            "message": data.get("message")
-        }
-    except Exception as e:
-        return {"status": "error", "error": "iss_fetch_failed", "detail": str(e), "timestamp": _now_iso()}
-
-@app.get("/v1/apod")
-async def get_apod(date: Optional[str] = None):
-    try:
-        url = "https://api.nasa.gov/planetary/apod"
-        params = {"api_key": NASA_API_KEY}
-        if date:
-            params["date"] = date
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
-        return {
-            "status": "ok",
-            "title": data.get("title"),
-            "date": data.get("date"),
-            "explanation": data.get("explanation"),
-            "url": data.get("url"),
-            "hdurl": data.get("hdurl"),
-            "media_type": data.get("media_type"),
-            "timestamp": _now_iso()
-        }
-    except Exception as e:
-        return {"status": "error", "error": "apod_fetch_failed", "detail": str(e), "timestamp": _now_iso()}
-
-@app.get("/v1/asteroids")
-async def get_asteroids(days_ahead: int = Query(30, ge=1, le=90)):
-    try:
-        today = datetime.now().strftime("%Y-%m-%d")
-        url = "https://api.nasa.gov/neo/rest/v1/feed"
-        params = {"start_date": today, "api_key": NASA_API_KEY}
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
-        return {
-            "status": "ok",
-            "element_count": data.get("element_count", 0),
-            "near_earth_objects": data.get("near_earth_objects", {}),
-            "timestamp": _now_iso()
-        }
-    except Exception as e:
-        return {"status": "error", "error": "asteroids_fetch_failed", "detail": str(e), "timestamp": _now_iso()}
-
-@app.get("/v1/planetary-position")
-async def get_planetary_position(
-    planet: str = Query(...),
-    date: Optional[str] = None,
-    time_str: Optional[str] = Query(None, alias="time"),
-    latitude: Optional[float] = None,
-    longitude: Optional[float] = None
-):
-    return {
-        "status": "ok",
-        "planet": planet,
-        "right_ascension": 123.45,
-        "declination": 23.45,
-        "distance_au": 5.2,
-        "magnitude": -2.5,
-        "timestamp": _now_iso()
-    }
-
-@app.get("/v1/constellations")
-async def get_constellations(
-    latitude: float = Query(..., ge=-90, le=90),
-    longitude: float = Query(..., ge=-180, le=180),
-    date: Optional[str] = None,
-    time_str: Optional[str] = Query(None, alias="time"),
-    min_altitude: float = Query(20.0, ge=0, le=90)
-):
-    return {
-        "status": "ok",
-        "location": {"latitude": latitude, "longitude": longitude},
-        "constellations": [],
-        "timestamp": _now_iso()
-    }
 
 @app.get("/v1/earth-image")
 async def get_earth_image():
@@ -476,6 +353,10 @@ async def get_earth_image():
         },
         headers={"Cache-Control": "public, max-age=600"}
     )
+
+# -------------------------------------------------
+# Root
+# -------------------------------------------------
 
 @app.get("/")
 async def root():
