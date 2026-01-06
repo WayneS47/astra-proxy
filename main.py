@@ -7,16 +7,16 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from datetime import datetime, timezone
-from typing import Optional, Dict, Tuple
+from typing import Dict, Tuple, Optional
 import httpx
 import os
 import time
 import asyncio
 import re
 
-# -----------------------------
+# -------------------------------------------------
 # App Initialization
-# -----------------------------
+# -------------------------------------------------
 
 app = FastAPI(
     title="Astra Astronomy API",
@@ -32,19 +32,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -----------------------------
-# Environment / Constants
-# -----------------------------
-
 NASA_API_KEY = os.getenv("NASA_API_KEY", "DEMO_KEY")
 
 GOES16_LATEST_IMAGE = (
     "https://cdn.star.nesdis.noaa.gov/GOES16/ABI/FD/GEOCOLOR/latest.jpg"
 )
 
-# -----------------------------
+# -------------------------------------------------
 # Weather Configuration
-# -----------------------------
+# -------------------------------------------------
 
 WEATHER_CACHE: Dict[str, Tuple[float, dict]] = {}
 WEATHER_TTL_SECONDS = 300  # 5 minutes
@@ -73,9 +69,9 @@ WEATHER_CODE_MAP = {
 PREWARM_LAT = 36.0331
 PREWARM_LON = -86.7828
 
-# -----------------------------
+# -------------------------------------------------
 # Geocoding Configuration
-# -----------------------------
+# -------------------------------------------------
 
 GEOCODE_CACHE: Dict[str, Tuple[float, dict]] = {}
 GEOCODE_TTL_SECONDS = 86400  # 24 hours
@@ -97,15 +93,22 @@ US_STATE_MAP = {
     "WA": "Washington", "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming"
 }
 
-# -----------------------------
-# Utility: Normalize US City/State
-# -----------------------------
+# -------------------------------------------------
+# Static Fallback Coordinates (Last Resort)
+# -------------------------------------------------
+
+STATIC_LOCATION_FALLBACKS = {
+    "fairbanks, alaska": (64.8378, -147.7164),
+    "fairbanks alaska": (64.8378, -147.7164),
+    "anchorage, alaska": (61.2181, -149.9003),
+    "juneau, alaska": (58.3019, -134.4197)
+}
+
+# -------------------------------------------------
+# Utilities
+# -------------------------------------------------
 
 def normalize_location_query(city: str) -> str:
-    """
-    Normalize inputs like:
-    - 'Huntsville, AL' -> 'Huntsville Alabama US'
-    """
     match = re.match(r"^(.*?),\s*([A-Z]{2})$", city.strip())
     if match:
         city_name = match.group(1).strip()
@@ -115,9 +118,9 @@ def normalize_location_query(city: str) -> str:
             return f"{city_name} {state_full} US"
     return city.strip()
 
-# -----------------------------
+# -------------------------------------------------
 # Startup: Weather Pre-Warm
-# -----------------------------
+# -------------------------------------------------
 
 @app.on_event("startup")
 async def startup_event():
@@ -125,49 +128,47 @@ async def startup_event():
 
 async def prewarm_weather_cache():
     try:
-        url = "https://api.open-meteo.com/v1/forecast"
-        params = {
-            "latitude": PREWARM_LAT,
-            "longitude": PREWARM_LON,
-            "current_weather": True,
-            "temperature_unit": "fahrenheit",
-            "windspeed_unit": "mph"
-        }
-
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
+            resp = await client.get(
+                "https://api.open-meteo.com/v1/forecast",
+                params={
+                    "latitude": PREWARM_LAT,
+                    "longitude": PREWARM_LON,
+                    "current_weather": True,
+                    "temperature_unit": "fahrenheit",
+                    "windspeed_unit": "mph"
+                }
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
         current = data.get("current_weather")
         if not current:
             return
 
         weathercode = current.get("weathercode")
-        condition = WEATHER_CODE_MAP.get(weathercode, "Unknown")
-
-        result = {
-            "status": "ok",
-            "location": {"latitude": PREWARM_LAT, "longitude": PREWARM_LON},
-            "weather": {
-                "temperature_f": round(current.get("temperature")),
-                "windspeed_mph": round(current.get("windspeed", 0)),
-                "condition": condition,
-                "weathercode": weathercode,
-                "is_day": bool(current.get("is_day"))
-            },
-            "observed_at": current.get("time"),
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-
-        WEATHER_CACHE[f"{PREWARM_LAT:.4f}:{PREWARM_LON:.4f}"] = (time.time(), result)
-
+        WEATHER_CACHE[f"{PREWARM_LAT:.4f}:{PREWARM_LON:.4f}"] = (
+            time.time(),
+            {
+                "status": "ok",
+                "location": {"latitude": PREWARM_LAT, "longitude": PREWARM_LON},
+                "weather": {
+                    "temperature_f": round(current.get("temperature")),
+                    "windspeed_mph": round(current.get("windspeed", 0)),
+                    "condition": WEATHER_CODE_MAP.get(weathercode, "Unknown"),
+                    "weathercode": weathercode,
+                    "is_day": bool(current.get("is_day"))
+                },
+                "observed_at": current.get("time"),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+        )
     except Exception:
         pass
 
-# -----------------------------
+# -------------------------------------------------
 # API: Weather
-# -----------------------------
+# -------------------------------------------------
 
 @app.get("/v1/weather")
 async def get_weather(
@@ -183,17 +184,17 @@ async def get_weather(
             return cached
 
     try:
-        url = "https://api.open-meteo.com/v1/forecast"
-        params = {
-            "latitude": latitude,
-            "longitude": longitude,
-            "current_weather": True,
-            "temperature_unit": "fahrenheit",
-            "windspeed_unit": "mph"
-        }
-
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(url, params=params)
+            resp = await client.get(
+                "https://api.open-meteo.com/v1/forecast",
+                params={
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "current_weather": True,
+                    "temperature_unit": "fahrenheit",
+                    "windspeed_unit": "mph"
+                }
+            )
             resp.raise_for_status()
             data = resp.json()
 
@@ -202,7 +203,6 @@ async def get_weather(
             raise ValueError("Missing current_weather")
 
         weathercode = current.get("weathercode")
-        condition = WEATHER_CODE_MAP.get(weathercode, "Unknown")
 
         result = {
             "status": "ok",
@@ -210,7 +210,7 @@ async def get_weather(
             "weather": {
                 "temperature_f": round(current.get("temperature")),
                 "windspeed_mph": round(current.get("windspeed", 0)),
-                "condition": condition,
+                "condition": WEATHER_CODE_MAP.get(weathercode, "Unknown"),
                 "weathercode": weathercode,
                 "is_day": bool(current.get("is_day"))
             },
@@ -224,9 +224,9 @@ async def get_weather(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# -----------------------------
-# API: Geocoding (Normalize + Retry + Fallback)
-# -----------------------------
+# -------------------------------------------------
+# API: Geocoding
+# -------------------------------------------------
 
 @app.get("/v1/geocode")
 async def geocode_location(city: str = Query(...)):
@@ -239,10 +239,11 @@ async def geocode_location(city: str = Query(...)):
             return cached
 
     async def fetch(query: str):
-        url = "https://geocoding-api.open-meteo.com/v1/search"
-        params = {"name": query, "count": 1, "language": "en", "format": "json"}
         async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(url, params=params)
+            r = await client.get(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                params={"name": query, "count": 1, "language": "en", "format": "json"}
+            )
             r.raise_for_status()
             return r.json()
 
@@ -256,11 +257,22 @@ async def geocode_location(city: str = Query(...)):
             data = await fetch(normalized)
 
         if not data.get("results"):
-            # Fallback: city name only
             simple_city = city.split(",")[0].strip()
             data = await fetch(f"{simple_city} US")
 
         if not data.get("results"):
+            fallback_key = city.strip().lower()
+            if fallback_key in STATIC_LOCATION_FALLBACKS:
+                lat, lon = STATIC_LOCATION_FALLBACKS[fallback_key]
+                return {
+                    "status": "ok",
+                    "latitude": lat,
+                    "longitude": lon,
+                    "name": city,
+                    "country": "US",
+                    "timezone": None,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
             raise HTTPException(status_code=404, detail="Location not found")
 
         r = data["results"][0]
@@ -282,9 +294,27 @@ async def geocode_location(city: str = Query(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# -----------------------------
+# -------------------------------------------------
+# Earth Image
+# -------------------------------------------------
+
+@app.get("/v1/earth-image")
+async def get_earth_image():
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "source": "NOAA GOES-16",
+            "description": "Near-real-time full-disk Earth image",
+            "image_url": GOES16_LATEST_IMAGE,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "update_frequency": "10-15 minutes"
+        },
+        headers={"Cache-Control": "public, max-age=600"}
+    )
+
+# -------------------------------------------------
 # Root
-# -----------------------------
+# -------------------------------------------------
 
 @app.get("/")
 async def root():
@@ -295,9 +325,9 @@ async def root():
         "documentation": "/docs"
     }
 
-# -----------------------------
+# -------------------------------------------------
 # Local Run
-# -----------------------------
+# -------------------------------------------------
 
 if __name__ == "__main__":
     import uvicorn
