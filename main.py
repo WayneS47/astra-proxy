@@ -12,6 +12,7 @@ import httpx
 import os
 import time
 import asyncio
+import re
 
 # -----------------------------
 # App Initialization
@@ -80,6 +81,40 @@ GEOCODE_CACHE: Dict[str, Tuple[float, dict]] = {}
 GEOCODE_TTL_SECONDS = 86400  # 24 hours
 GEOCODE_RETRY_DELAY = 0.25  # seconds
 
+US_STATE_MAP = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
+    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
+    "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island",
+    "SC": "South Carolina", "SD": "South Dakota", "TN": "Tennessee",
+    "TX": "Texas", "UT": "Utah", "VT": "Vermont", "VA": "Virginia",
+    "WA": "Washington", "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming"
+}
+
+# -----------------------------
+# Utility: Normalize US City/State
+# -----------------------------
+
+def normalize_location_query(city: str) -> str:
+    """
+    Normalize inputs like:
+    - 'Huntsville, AL' -> 'Huntsville Alabama US'
+    """
+    match = re.match(r"^(.*?),\s*([A-Z]{2})$", city.strip())
+    if match:
+        city_name = match.group(1).strip()
+        state_abbr = match.group(2)
+        state_full = US_STATE_MAP.get(state_abbr)
+        if state_full:
+            return f"{city_name} {state_full} US"
+    return city.strip()
+
 # -----------------------------
 # Startup: Weather Pre-Warm
 # -----------------------------
@@ -113,10 +148,7 @@ async def prewarm_weather_cache():
 
         result = {
             "status": "ok",
-            "location": {
-                "latitude": PREWARM_LAT,
-                "longitude": PREWARM_LON
-            },
+            "location": {"latitude": PREWARM_LAT, "longitude": PREWARM_LON},
             "weather": {
                 "temperature_f": round(current.get("temperature")),
                 "windspeed_mph": round(current.get("windspeed", 0)),
@@ -128,26 +160,13 @@ async def prewarm_weather_cache():
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
-        cache_key = f"{PREWARM_LAT:.4f}:{PREWARM_LON:.4f}"
-        WEATHER_CACHE[cache_key] = (time.time(), result)
+        WEATHER_CACHE[f"{PREWARM_LAT:.4f}:{PREWARM_LON:.4f}"] = (time.time(), result)
 
     except Exception:
         pass
 
 # -----------------------------
-# Health
-# -----------------------------
-
-@app.get("/health")
-async def health_check():
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": "2.0"
-    }
-
-# -----------------------------
-# API 1: Weather
+# API: Weather
 # -----------------------------
 
 @app.get("/v1/weather")
@@ -155,13 +174,13 @@ async def get_weather(
     latitude: float = Query(..., ge=-90, le=90),
     longitude: float = Query(..., ge=-180, le=180)
 ):
-    cache_key = f"{latitude:.4f}:{longitude:.4f}"
+    key = f"{latitude:.4f}:{longitude:.4f}"
     now = time.time()
 
-    if cache_key in WEATHER_CACHE:
-        cached_time, cached_data = WEATHER_CACHE[cache_key]
-        if now - cached_time < WEATHER_TTL_SECONDS:
-            return cached_data
+    if key in WEATHER_CACHE:
+        ts, cached = WEATHER_CACHE[key]
+        if now - ts < WEATHER_TTL_SECONDS:
+            return cached
 
     try:
         url = "https://api.open-meteo.com/v1/forecast"
@@ -174,9 +193,9 @@ async def get_weather(
         }
 
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
 
         current = data.get("current_weather")
         if not current:
@@ -187,10 +206,7 @@ async def get_weather(
 
         result = {
             "status": "ok",
-            "location": {
-                "latitude": latitude,
-                "longitude": longitude
-            },
+            "location": {"latitude": latitude, "longitude": longitude},
             "weather": {
                 "temperature_f": round(current.get("temperature")),
                 "windspeed_mph": round(current.get("windspeed", 0)),
@@ -202,86 +218,69 @@ async def get_weather(
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
-        WEATHER_CACHE[cache_key] = (now, result)
+        WEATHER_CACHE[key] = (now, result)
         return result
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # -----------------------------
-# API 9: Geocoding (Cache + Retry)
+# API: Geocoding (Normalize + Retry + Fallback)
 # -----------------------------
 
 @app.get("/v1/geocode")
 async def geocode_location(city: str = Query(...)):
-    key = city.strip().lower()
+    cache_key = city.strip().lower()
     now = time.time()
 
-    # Cache hit
-    if key in GEOCODE_CACHE:
-        cached_time, cached_data = GEOCODE_CACHE[key]
-        if now - cached_time < GEOCODE_TTL_SECONDS:
-            return cached_data
+    if cache_key in GEOCODE_CACHE:
+        ts, cached = GEOCODE_CACHE[cache_key]
+        if now - ts < GEOCODE_TTL_SECONDS:
+            return cached
 
-    async def fetch_geocode():
+    async def fetch(query: str):
         url = "https://geocoding-api.open-meteo.com/v1/search"
-        params = {
-            "name": city,
-            "count": 1,
-            "language": "en",
-            "format": "json"
-        }
+        params = {"name": query, "count": 1, "language": "en", "format": "json"}
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            return response.json()
+            r = await client.get(url, params=params)
+            r.raise_for_status()
+            return r.json()
 
     try:
+        normalized = normalize_location_query(city)
+
         try:
-            data = await fetch_geocode()
+            data = await fetch(normalized)
         except Exception:
             await asyncio.sleep(GEOCODE_RETRY_DELAY)
-            data = await fetch_geocode()
+            data = await fetch(normalized)
+
+        if not data.get("results"):
+            # Fallback: city name only
+            simple_city = city.split(",")[0].strip()
+            data = await fetch(f"{simple_city} US")
 
         if not data.get("results"):
             raise HTTPException(status_code=404, detail="Location not found")
 
-        result = data["results"][0]
+        r = data["results"][0]
         payload = {
             "status": "ok",
-            "latitude": result.get("latitude"),
-            "longitude": result.get("longitude"),
-            "name": result.get("name"),
-            "country": result.get("country"),
-            "timezone": result.get("timezone"),
+            "latitude": r.get("latitude"),
+            "longitude": r.get("longitude"),
+            "name": r.get("name"),
+            "country": r.get("country"),
+            "timezone": r.get("timezone"),
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
-        GEOCODE_CACHE[key] = (now, payload)
+        GEOCODE_CACHE[cache_key] = (now, payload)
         return payload
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-# -----------------------------
-# API 8: Earth Image
-# -----------------------------
-
-@app.get("/v1/earth-image")
-async def get_earth_image():
-    return JSONResponse(
-        content={
-            "status": "ok",
-            "source": "NOAA GOES-16",
-            "description": "Near-real-time full-disk Earth image",
-            "image_url": GOES16_LATEST_IMAGE,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "update_frequency": "10-15 minutes"
-        },
-        headers={"Cache-Control": "public, max-age=600"}
-    )
 
 # -----------------------------
 # Root
