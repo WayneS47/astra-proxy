@@ -121,6 +121,8 @@ async def fetch_and_cache_weather(latitude: float, longitude: float):
     condition = WEATHER_CODE_MAP.get(weathercode, "Unknown")
     is_day = bool(current.get("is_day"))
 
+    daylight_description = "Daytime" if is_day else "Nighttime"
+
     result = {
         "status": "ok",
         "location": {
@@ -137,8 +139,9 @@ async def fetch_and_cache_weather(latitude: float, longitude: float):
             "visibility_miles": None,
             "conditions": condition,
             "is_day": is_day,
-            "daylight_description": "Daytime" if is_day else "Nighttime"
+            "daylight_description": daylight_description
         },
+        "daylight_phrase": f"\ud83d\udd52 Daylight: It\u2019s currently {daylight_description} at this location.",
         "observed_at": current.get("time"),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
