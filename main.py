@@ -80,7 +80,6 @@ PREWARM_LON = -86.7828
 async def startup_event():
     await prewarm_weather_cache()
 
-
 async def prewarm_weather_cache():
     """Pre-warm weather cache for Brentwood, TN"""
     try:
@@ -120,6 +119,7 @@ async def fetch_and_cache_weather(latitude: float, longitude: float):
 
     weathercode = current.get("weathercode")
     condition = WEATHER_CODE_MAP.get(weathercode, "Unknown")
+    is_day = bool(current.get("is_day"))
 
     result = {
         "status": "ok",
@@ -136,7 +136,8 @@ async def fetch_and_cache_weather(latitude: float, longitude: float):
             "cloud_cover_percent": None,
             "visibility_miles": None,
             "conditions": condition,
-            "is_day": bool(current.get("is_day"))
+            "is_day": is_day,
+            "daylight_description": "Daytime" if is_day else "Nighttime"
         },
         "observed_at": current.get("time"),
         "timestamp": datetime.now(timezone.utc).isoformat()
